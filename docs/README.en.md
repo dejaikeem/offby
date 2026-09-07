@@ -69,6 +69,71 @@ X-Offby-Diagnosis: /j/j_7f3a/diagnosis
 
 **4. Diagnosis, only on breach.** `nemotron-3-super-120b` reads an evidence bundle — reasoning-token share (`usage.completion_tokens_details.reasoning_tokens`), retries and 429s, cached-input share, service tier, any model you never mentioned — and streams the mechanism, the top unknown-unknown, and a corrected forecast. You either `accept` the new number or fix the cause and rerun.
 
+## A job, start to finish
+
+**22:10** A on the data team posts in Slack: *"200k-row classification pass tonight on nemotron-nano, short prompts, paragraph answers, under $20."*
+
+**22:11** She pastes the sentence as-is.
+
+```
+$ offby forecast "200k-row classification pass tonight on nemotron-nano, short prompts, paragraph answers, under $20" --budget 20
+
+  term             forecast     source
+  calls            200,000      stated
+  input tok/call   400          ASSUMED ← "short prompts"
+  output tok/call  250          ASSUMED ← "paragraph answers"
+  price $/M        0.06 / 0.24  token factory (live)
+  window           tonight      stated
+  projected        $16.80       (< $20 ✓)
+
+  2 terms are Offby's guesses. Enter to accept, or edit:  ↵
+  job j_7f3a created. base_url → http://localhost:8402/j/j_7f3a/v1
+```
+
+250 sounds right to her; Enter. **One model call so far** (sentence → five terms).
+
+**22:12** One environment variable on the existing script.
+
+```
+$ OPENAI_BASE_URL=http://localhost:8402/j/j_7f3a/v1 python classify.py
+```
+
+**22:12:40** The proxy records the `usage` object that rides on every response. Ten calls in:
+
+| call | prompt | completion | of which reasoning |
+|---|---|---|---|
+| 1 | 402 | 2,180 | 1,905 |
+| 2 | 398 | 2,090 | 1,820 |
+| … | … | … | … |
+| 10 | 411 | 2,150 | 1,870 |
+
+Verdict (arithmetic only): mean output 2,137 ÷ forecast 250 = **8.5×**; last-5 mean 2,140 ÷ 250 = **8.6×** — both over the 2× threshold → **breach**. Calls, input (mean 405) and price are on plan. The broken term is `output_tokens`, alone. Projection: $0.005 spent, **$107.6** if nothing changes.
+
+**22:13** The 25th request gets a 402. Her terminal:
+
+```
+openai.APIStatusError: 402 offby: term output_tokens breached 8.6x (250→2150)
+  — halted at 25/200000; projected $107.6 vs $16.80.
+  resume: offby accept j_7f3a output_tokens=2200   diagnosis: http://localhost:8402/j/j_7f3a
+```
+
+**22:13** The diagnosis panel (second model call, `nemotron-3-super`):
+
+> Broken term: **output**. 87% of completion tokens are reasoning (`usage.completion_tokens_details.reasoning_tokens`). `nemotron-3-nano` thinks by default — you priced a paragraph; it billed a trace plus a paragraph. Calls, input and price are on plan. **Fix**: `chat_template_kwargs.enable_thinking=false` → ~290 output tokens/call, projected **$18.9**.
+
+**22:15** She adds the flag and reruns. Gauges go green past call 60. The job finishes at 3 a.m.; the bill is $18.7.
+
+**The same night without Offby**
+- No cap → a **$107** invoice in the morning, and a log to dig through to learn why it was 6× off.
+- `max_budget=20` on a LiteLLM key → around 1 a.m., at call **~37,000**: `Budget has been exceeded! Current cost: 20.0, Max budget: 20`. 19% processed, $20 gone, and the same settings fail the same way on rerun. If nemotron-3 is missing from LiteLLM's price table the cap **never fires** (cost recorded as $0).
+- Cap on a shared team key → her job drains **the whole team's budget** overnight and other people's requests start failing.
+
+Offby did one thing: **compared the numbers you said to the numbers observed, term by term, and named the one that was wrong before the money left.**
+
+### Without a forecast — baseline mode
+
+Too lazy to write the sentence? `offby serve --baseline 10` uses the first ten calls as the baseline and only flags sudden shifts (2× per term). It cannot say "this differs from what you expected", but it will say "output tripled from call 50".
+
 ## What the models do here
 
 | | Role | Why this one |
@@ -110,6 +175,7 @@ offby serve   --upstream https://api.tokenfactory.nebius.com/v1     # the proxy
 offby forecast "200k-row classification tonight on nemotron-nano, short prompts, paragraph answers, under $20" --budget 20
 offby report  j_7f3a                                                 # per-term forecast vs observed, cost, diagnosis
 offby accept  j_7f3a output_tokens=2200                              # accept one term, resume
+offby serve   --baseline 10                                          # no forecast: first 10 calls set the baseline, flag sudden shifts
 ```
 
 ## Roadmap

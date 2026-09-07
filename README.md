@@ -71,6 +71,71 @@ X-Offby-Diagnosis: /j/j_7f3a/diagnosis
 
 **4. 진단은 이탈 때만.** `nemotron-3-super-120b`가 증거 묶음 — reasoning 토큰 비중(`usage.completion_tokens_details.reasoning_tokens`), 재시도·429, 캐시 입력 비중, service tier, 언급한 적 없는 모델 — 을 읽고 **메커니즘 · 최상위 unknown-unknown · 수정 예보**를 스트리밍한다. 새 숫자를 `accept`하거나 원인을 고쳐 재실행한다.
 
+## 시나리오 — 잡 하나를 끝까지
+
+**22:10** 데이터팀의 A가 슬랙에 쓴다: *"오늘 밤 리뷰 20만 건을 nemotron-nano로 분류할게요. 프롬프트 짧고, 답은 한 문단, 20달러 안일 거예요."*
+
+**22:11** 그 문장을 그대로 넣는다.
+
+```
+$ offby forecast "오늘 밤 리뷰 20만 건을 nemotron-nano로 분류. 프롬프트 짧고, 답은 한 문단, 20달러 안" --budget 20
+
+  항              예보        출처
+  호출수          200,000     문장
+  입력 tok/콜     400         ASSUMED ← "프롬프트 짧고"
+  출력 tok/콜     250         ASSUMED ← "답은 한 문단"
+  단가 $/M        0.06 / 0.24 token factory (live)
+  창              오늘 밤     문장
+  예상 총액       $16.80      (< $20 ✓)
+
+  ASSUMED 2건은 Offby가 추측한 값입니다. 맞으면 Enter, 아니면 고치세요:  ↵
+  job j_7f3a 생성. base_url → http://localhost:8402/j/j_7f3a/v1
+```
+
+A는 250이 대충 맞다고 생각해서 Enter. **여기까지 모델 호출 1번**(문장 → 5항 파싱).
+
+**22:12** 스크립트에 환경변수 한 줄 붙여 실행.
+
+```
+$ OPENAI_BASE_URL=http://localhost:8402/j/j_7f3a/v1 python classify.py
+```
+
+**22:12:40** 응답마다 붙어오는 `usage`를 프록시가 기록한다. 열 콜이 쌓였다:
+
+| 콜 | prompt | completion | 그중 reasoning |
+|---|---|---|---|
+| 1 | 402 | 2,180 | 1,905 |
+| 2 | 398 | 2,090 | 1,820 |
+| … | … | … | … |
+| 10 | 411 | 2,150 | 1,870 |
+
+판정(산술만): 출력 평균 2,137 ÷ 예보 250 = **8.5배**, 최근 5콜 평균 2,140 ÷ 250 = **8.6배** — 둘 다 임계 2배 초과 → **이탈**. 호출수·입력(평균 405)·단가는 계획대로. 깨진 항은 `output_tokens` 하나. 투영: 지금까지 $0.005, 이대로면 **$107.6**.
+
+**22:13** 25번째 요청에 프록시가 402를 돌려준다. A의 터미널:
+
+```
+openai.APIStatusError: 402 offby: term output_tokens breached 8.6x (250→2150)
+  — halted at 25/200000; projected $107.6 vs $16.80.
+  resume: offby accept j_7f3a output_tokens=2200   diagnosis: http://localhost:8402/j/j_7f3a
+```
+
+**22:13** 진단 패널(모델 호출 2번째, `nemotron-3-super`):
+
+> 깨진 항: **출력**. completion 토큰의 87%가 reasoning(`usage.completion_tokens_details.reasoning_tokens`). `nemotron-3-nano`는 기본이 think-on — 문단 하나를 값 매겼는데 사고 과정 + 문단이 청구됐다. 호출수·입력·단가는 계획대로. **수정**: `chat_template_kwargs.enable_thinking=false` → 출력 ~290/콜, 투영 **$18.9**.
+
+**22:15** A가 옵션을 넣고 재실행. 60콜부터 게이지가 초록. 새벽 3시에 끝났고 청구는 $18.7.
+
+**같은 밤, Offby가 없었다면**
+- 캡 없음 → 아침에 **$107** 청구서. 왜 6배가 나왔는지는 로그를 열어 직접 계산해야 안다.
+- LiteLLM 키에 `max_budget=20` → 새벽 1시쯤 **37,000번째 콜**에서 `Budget has been exceeded! Current cost: 20.0, Max budget: 20`. 19%만 처리됐고 $20은 사라졌고, 같은 설정으로 재실행하면 같은 일이 난다. 그리고 nemotron-3가 LiteLLM 가격표에 없으면 이 캡은 **울리지도 않는다**(비용 $0로 기록).
+- 팀 공용 키에 캡 → A의 잡이 새벽에 **팀 전체 예산을 소진**해 다른 사람 요청까지 거부된다.
+
+Offby가 한 일은 딱 하나다: **네가 말한 숫자와 실측 숫자를 항별로 대조해서, 돈이 나가기 전에 어긋난 항의 이름을 불렀다.**
+
+### 예보 문장 없이 쓰기 — 베이스라인 모드
+
+예보를 적기 귀찮으면 `offby serve --baseline 10`. 첫 10콜을 기준으로 삼고 그 뒤 급변(항별 2배)만 잡는다. "네 기대와 다르다"는 못 말하지만 "50콜부터 출력이 3배 뛰었다"는 잡힌다.
+
 ## 모델은 어디서 무게를 받나
 
 | | 역할 | 왜 이 모델 |
@@ -112,6 +177,7 @@ offby serve   --upstream https://api.tokenfactory.nebius.com/v1     # 프록시
 offby forecast "200k-row classification tonight on nemotron-nano, short prompts, paragraph answers, under $20" --budget 20
 offby report  j_7f3a                                                 # 항별 예보 vs 관측, 비용, 진단
 offby accept  j_7f3a output_tokens=2200                              # 항 하나 수용, 재개
+offby serve   --baseline 10                                          # 예보 없이: 첫 10콜을 기준으로 급변만 감지
 ```
 
 ## 로드맵
