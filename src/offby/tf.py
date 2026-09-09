@@ -147,8 +147,11 @@ def _first_json(text: str) -> dict:
         return json.loads(m.group(0))
 
 
-async def _chat(client, upstream, api_key, model, messages, response_format=None, max_tokens=800) -> dict:
-    body = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0}
+async def _chat(client, upstream, api_key, model, messages, response_format=None, max_tokens=1200) -> dict:
+    # Offby's own calls want an answer, not a trace: ask for thinking off in both dialects
+    # (vLLM/Token Factory read chat_template_kwargs, Ollama reads reasoning_effort). Either is ignored where unknown.
+    body = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0,
+            "chat_template_kwargs": {"enable_thinking": False}, "reasoning_effort": "none"}
     if response_format:
         body["response_format"] = response_format
     r = await client.post(
@@ -259,5 +262,5 @@ async def diagnose(client: httpx.AsyncClient, upstream: str, api_key: str, evide
         {"role": "system", "content": DIAG_SYSTEM},
         {"role": "user", "content": json.dumps(evidence, ensure_ascii=False, default=str)},
     ]
-    resp = await _chat(client, upstream, api_key, model, messages, max_tokens=600)
+    resp = await _chat(client, upstream, api_key, model, messages, max_tokens=1200)
     return _strip_think(resp["choices"][0]["message"]["content"] or "")

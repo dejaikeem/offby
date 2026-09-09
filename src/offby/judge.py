@@ -29,6 +29,7 @@ class Call:
     out_per_m: float | None
     status: int = 200
     estimated: bool = False  # usage was missing; tokens estimated from streamed content
+    price_source: str | None = None  # oracle | forecast | gateway — None when unpriced
 
     @property
     def ok(self) -> bool:
@@ -69,6 +70,7 @@ class Verdict:
     terms: dict[str, TermVerdict] = field(default_factory=dict)
     spent_usd: float = 0.0
     unpriced_calls: int = 0
+    forecast_priced: int = 0  # calls priced at the forecast unit price because the upstream has no price list
     errors: dict[str, int] = field(default_factory=dict)  # status → count, this run
     unmetered: int = 0  # 2xx responses without usage, this run
     estimated: int = 0  # calls whose tokens were estimated, this run
@@ -159,6 +161,7 @@ def judge(terms: dict, calls: list[Call], *, min_calls: int = MIN_CALLS, thresho
     costs = [c.cost_usd for c in valid_run]
     v.spent_usd = sum(c for c in costs if c is not None)
     v.unpriced_calls = sum(1 for c in costs if c is None)
+    v.forecast_priced = sum(1 for c in valid_run if c.price_source == "forecast")
     v.expected_usd = forecast_total(terms)
 
     fc_calls = term_value(terms, "calls")
@@ -166,19 +169,21 @@ def judge(terms: dict, calls: list[Call], *, min_calls: int = MIN_CALLS, thresho
     fc_in_pm, fc_out_pm = price_terms(terms)
 
     if fc_calls and valid_run:
-        # rate = cost per priced call in the judged window (since the last resume), else the whole run
+        # remaining calls count from the last resume (a rerun after `accept` starts the file over);
+        # rate = cost per priced call in the judged window, else the whole run
         priced = [c.cost_usd for c in window if c.cost_usd is not None] or [c for c in costs if c is not None]
         if priced:
-            v.projected_usd = v.spent_usd + max(0, fc_calls - len(valid_run)) * fmean(priced)
+            v.projected_usd = v.spent_usd + max(0, fc_calls - len(window)) * fmean(priced)
 
     v.terms["output_tokens"] = _series("output_tokens", fc_out, [c.completion_tokens for c in window], min_calls, threshold, z)
     v.terms["input_tokens"] = _series("input_tokens", fc_in, [c.prompt_tokens for c in window], min_calls, threshold, z)
 
-    # price: cost of the observed tokens at the observed model's price vs. at the forecast price
+    # price: cost of the observed tokens at the observed model's price vs. at the forecast price.
+    # Only calls the oracle/gateway actually priced can say anything; forecast-priced calls are 1.0 by construction.
     if fc_in_pm is not None and fc_out_pm is not None:
         ratios: list[float | None] = []
         for c in window:
-            if c.cost_usd is None:
+            if c.cost_usd is None or c.price_source == "forecast":
                 ratios.append(None)
                 continue
             fc_cost = ((c.prompt_tokens or 0) * fc_in_pm + (c.completion_tokens or 0) * fc_out_pm) / 1e6
@@ -187,7 +192,7 @@ def judge(terms: dict, calls: list[Call], *, min_calls: int = MIN_CALLS, thresho
     else:
         v.terms["price"] = TermVerdict("price", None)
 
-    nv = len(valid_run)
+    nv = len(window)  # calls since the last resume: a full rerun after `accept` must not double-count
     if fc_calls:
         r = nv / fc_calls
         v.terms["calls"] = TermVerdict("calls", fc_calls, nv, nv, r, r, breached=r > threshold, n_valid=nv)

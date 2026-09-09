@@ -31,6 +31,10 @@ def _table(rows: list[list[str]], header: list[str]) -> str:
     return "\n".join([fmt(header), fmt(["-" * w for w in widths]), *(fmt(r) for r in rows)])
 
 
+def _usd(x: float) -> str:
+    return f"${x:,.2f}" if x >= 1 else f"${x:.4f}"
+
+
 def _parse_price(s: str | None) -> tuple[float, float] | None:
     if not s:
         return None
@@ -122,7 +126,7 @@ def _print_terms(terms: dict, budget: float | None) -> None:
     total = J.forecast_total(terms)
     if total is not None:
         ok = "" if budget is None else (" ✓" if total <= budget else _c(RED, f"  > budget ${budget:g}"))
-        rows.append(["expected total", f"${total:,.2f}", (f"budget ${budget:g}{ok}" if budget is not None else "")])
+        rows.append(["expected total", _usd(total), (f"budget ${budget:g}{ok}" if budget is not None else "")])
     print()
     print(_table(rows, ["term", "forecast", "source"]))
 
@@ -217,7 +221,8 @@ def cmd_forecast(args) -> int:
 def _verdict(store: Store, job: dict) -> J.Verdict:
     rows = store.calls(job["id"])
     calls = [J.Call(r["prompt_tokens"], r["completion_tokens"], r["in_per_m"], r["out_per_m"],
-                    status=r.get("status") or 200, estimated=bool(r.get("usage_estimated"))) for r in rows]
+                    status=r.get("status") or 200, estimated=bool(r.get("usage_estimated")),
+                    price_source=r.get("price_source") or ("oracle" if r["in_per_m"] is not None else None)) for r in rows]
     return J.judge(job["terms"], calls, min_calls=job["min_calls"], threshold=job["threshold"],
                    since=job.get("judge_from") or 0, run_since=job.get("run_from") or 0)
 
@@ -251,13 +256,15 @@ def cmd_report(args) -> int:
         table.append([name, fc, obs, rec, ratio, conf, status])
     print()
     print(_table(table, ["term", "forecast", "observed", "last 5", "ratio", "t", ""]))
-    money = f"  spent ${v.spent_usd:,.4f}"
+    money = f"  spent {_usd(v.spent_usd)}"
     if v.expected_usd is not None:
-        money += f"  expected ${v.expected_usd:,.2f}"
+        money += f"  expected {_usd(v.expected_usd)}"
     if v.projected_usd is not None:
-        money += f"  projected ${v.projected_usd:,.2f}"
+        money += f"  projected {_usd(v.projected_usd)}"
     if v.unpriced_calls:
         money += _c(RED, f"  UNPRICED calls: {v.unpriced_calls}")
+    if v.forecast_priced:
+        money += _c(YELLOW, f"  (priced at the forecast rate — upstream lists no price; {v.forecast_priced} calls)")
     since = f", judging the last {v.judged}" if v.judged != v.valid else ""
     hist = f"  ({v.total:,} in history)" if v.total != v.n else ""
     print(f"\n  calls this run {v.n}, with usage {v.valid}{since}{hist}  "
@@ -344,12 +351,12 @@ def cmd_lessons(args) -> int:
             m["in"].append(r["prompt_tokens"] or 0)
             (m["think_out"] if (r.get("reasoning_tokens") or 0) > 0 else m["nothink_out"]).append(r["completion_tokens"])
             if r.get("in_per_m") is not None:
-                m["price"] = (r["in_per_m"], r["out_per_m"])
+                m["price"] = (r["in_per_m"], r["out_per_m"], r.get("price_source") or "oracle")
     total_calls = sum(m["calls"] for m in per_model.values())
     print(f"\n  offby lessons — {len(jobs)} job(s), {total_calls:,} metered call(s)\n")
     print("  MODELS (from usage objects; 'thinking' = reasoning_tokens > 0)")
     for mid, m in sorted(per_model.items(), key=lambda kv: -kv[1]["calls"]):
-        price = f"${m['price'][0]:g}/{m['price'][1]:g} per M" if m["price"] else "UNPRICED"
+        price = (f"${m['price'][0]:g}/{m['price'][1]:g} per M" + (" (forecast price)" if m["price"][2] == "forecast" else "")) if m["price"] else "UNPRICED"
         line = f"  - {mid}: {m['calls']:,} calls, {price}, input mean {fmean(m['in']):.0f}"
         if m["think_out"]:
             line += f", output mean {fmean(m['think_out']):.0f} with thinking ({len(m['think_out'])} calls)"

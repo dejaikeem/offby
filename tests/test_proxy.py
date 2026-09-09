@@ -211,3 +211,35 @@ async def test_halted_job_still_serves_non_metered_paths(stack):
         r = await c.post("/j/j_x/v1/chat/completions", json=chat())
         assert r.status_code == 402 and r.headers["x-should-retry"] == "false"
         assert r.json()["error"]["message"].startswith("offby_term_breach:")
+
+
+async def test_upstream_without_prices_uses_forecast_price_flagged(tmp_path):
+    mock = create_mock(seed=3, pricing="absent")
+    app = create_app("http://mock/v1", db_path=tmp_path / "fp.sqlite", transport=httpx.ASGITransport(app=mock))
+    app.state.store.create_job("j_fp", TERMS)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://offby") as c:
+        for i in range(12):
+            r = await c.post("/j/j_fp/v1/chat/completions", json=chat())
+            if r.status_code == 402:
+                break
+        assert r.status_code == 402
+        assert "at the forecast price" in r.json()["error"]["message"]
+        rep = (await c.get("/j/j_fp/report")).json()["verdict"]
+    assert rep["spent_usd"] > 0 and rep["unpriced_calls"] == 0 and rep["forecast_priced"] == rep["valid"]
+    assert rep["per_term"]["price"]["ratio"] is None  # a forecast price cannot detect a model swap
+
+
+async def test_rerun_after_accept_does_not_double_count_calls(stack):
+    app, store = stack
+    terms = dict(TERMS); terms["calls"] = {"value": 12, "source": "stated"}
+    store.create_job("j_re", terms)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://offby") as c:
+        for _ in range(11):
+            r = await c.post("/j/j_re/v1/chat/completions", json=chat())
+        assert r.status_code == 402
+        store.resume("j_re")
+        for _ in range(12):  # the whole file again, thinking off
+            r = await c.post("/j/j_re/v1/chat/completions", json=chat(think=False))
+        assert r.status_code == 200
+        rep = (await c.get("/j/j_re/report")).json()["verdict"]
+    assert rep["per_term"]["calls"]["observed"] == 12 and not rep["per_term"]["calls"]["breached"]

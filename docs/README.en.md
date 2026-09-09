@@ -188,6 +188,8 @@ To run the same flow as an agent skill, put `skills/offby/SKILL.md` in your harn
 
 The sponsor is also the subject: Nemotron thinks by default and bills the trace as output tokens. The demo overrun is measured, not staged.
 
+**First measurement (2026-09-09, local `nemotron-3-nano:4b` Q4 via Ollama, 120 reviews classified, $0):** the official chat template defaults `enable_thinking` to True. Thinking on: completion median 144 · mean 217 · p95 559 · max 848 (85% reasoning, lognormal σ≈0.6); thinking off (`reasoning_effort: none`): 67 → **3.2× (mean)**. The "8.6×" in the table above is an illustration for the 30B with long answers; the real multiplier depends on model and prompt. Ollama puts no `reasoning_tokens` in usage (Offby estimated from the `reasoning` field), ignores `chat_template_kwargs` and reads `reasoning_effort` — the off switch differs per server. A run on the same 4B with output mis-forecast at 60 was halted at **4.7× after 42 calls** (what t > 2.5 confidence costs on a heavy tail; $0.003 spent by then). The 4B was not enough for diagnosis (it blamed latency and missed the 88% reasoning share) or sentence parsing (120 reviews → calls=1) — the assumption that those two seats need Super held. The Token Factory 30B measurement is still pending.
+
 ## Why not just a budget cap?
 
 Keep the cap. Offby does not replace it — it stands **next to it.** If the cap is the sprinkler, Offby is the smoke detector.

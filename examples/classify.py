@@ -32,7 +32,9 @@ def main() -> int:
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--model", default=os.environ.get("OFFBY_JOB_MODEL", "mock/nemotron-3-nano-30b-a3b"),
                     help="the mock id by default; pass the real id (or set OFFBY_JOB_MODEL) for a real upstream")
-    ap.add_argument("--no-think", action="store_true", help="send chat_template_kwargs.enable_thinking=false")
+    ap.add_argument("--no-think", action="store_true",
+                    help="ask for no reasoning trace: chat_template_kwargs.enable_thinking=false (vLLM/Token Factory) "
+                         "AND reasoning_effort=none (Ollama) — servers differ on which flag they read")
     ap.add_argument("--stream", action="store_true")
     args = ap.parse_args()
 
@@ -42,7 +44,7 @@ def main() -> int:
         texts = [REVIEWS[i % len(REVIEWS)] for i in range(args.n)]
     # the SDK retries 429/5xx on its own and never retries a 402, so Offby's halt is seen immediately
     client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "offby-mock"), max_retries=2)
-    extra = {"chat_template_kwargs": {"enable_thinking": False}} if args.no_think else None
+    extra = {"chat_template_kwargs": {"enable_thinking": False}, "reasoning_effort": "none"} if args.no_think else None
 
     def one(i: int):
         review = texts[i]

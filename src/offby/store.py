@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS calls (
   latency_ms REAL,
   in_per_m REAL,
   out_per_m REAL,
+  price_source TEXT,
   cost_usd REAL,
   PRIMARY KEY (job_id, seq)
 );
@@ -69,7 +70,7 @@ class Store:
         wanted = {
             "jobs": (("judge_from", "INTEGER NOT NULL DEFAULT 0"), ("run_from", "INTEGER NOT NULL DEFAULT 0"),
                      ("halted_at", "INTEGER")),
-            "calls": (("usage_estimated", "INTEGER NOT NULL DEFAULT 0"), ("finish_reason", "TEXT")),
+            "calls": (("usage_estimated", "INTEGER NOT NULL DEFAULT 0"), ("finish_reason", "TEXT"), ("price_source", "TEXT")),
         }
         for table, cols in wanted.items():
             have = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
