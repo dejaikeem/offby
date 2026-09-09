@@ -6,7 +6,7 @@
 
 Before you run, you say what you expect. Offby watches the job and, the moment the numbers disagree with you — at about the tenth call, not after the budget is gone — it halts the job and **names the assumption that broke.**
 
-> **Status: PoC runs against a mock upstream.** Token Factory measurements not yet done. Entry for the [Nebius × NVIDIA Global AI Hackathon](https://nebiusglobalaihackathon.devpost.com/), deadline 2026-10-30. Nothing is shipped until the roadmap boxes are ticked.
+> **Status: PoC runs against a mock upstream and a local 4B.** Token Factory measurements not yet done. Entry for the [Nebius × NVIDIA Global AI Hackathon](https://nebiusglobalaihackathon.devpost.com/), deadline 2026-10-30. Nothing is shipped until the roadmap boxes are ticked. What exists and what is verified, plainly: [STATUS.md](STATUS.md) (Korean).
 
 ---
 
