@@ -36,12 +36,18 @@ def main() -> int:
                     help="ask for no reasoning trace: chat_template_kwargs.enable_thinking=false (vLLM/Token Factory) "
                          "AND reasoning_effort=none (Ollama) — servers differ on which flag they read")
     ap.add_argument("--stream", action="store_true")
+    ap.add_argument("--system", default="Classify the review sentiment and justify in one paragraph.")
+    ap.add_argument("--start", type=int, default=0, help="first row (0-based) of --data to process")
+    ap.add_argument("--limit", type=int, help="process at most this many rows")
     args = ap.parse_args()
 
     if args.data:
         texts = [json.loads(ln)["text"] for ln in open(args.data) if ln.strip()]
     else:
         texts = [REVIEWS[i % len(REVIEWS)] for i in range(args.n)]
+    texts = texts[args.start:]
+    if args.limit is not None:
+        texts = texts[: args.limit]
     # the SDK retries 429/5xx on its own and never retries a 402, so Offby's halt is seen immediately
     client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "offby-mock"), max_retries=2)
     extra = {"chat_template_kwargs": {"enable_thinking": False}, "reasoning_effort": "none"} if args.no_think else None
@@ -49,7 +55,7 @@ def main() -> int:
     def one(i: int):
         review = texts[i]
         kw = dict(model=args.model, max_tokens=4000,
-                  messages=[{"role": "system", "content": "Classify the review sentiment and justify in one paragraph."},
+                  messages=[{"role": "system", "content": args.system},
                             {"role": "user", "content": review}])
         if extra:
             kw["extra_body"] = extra

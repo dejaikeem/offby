@@ -20,11 +20,15 @@ You wrote in Slack: *"200k-row classification tonight on nemotron-nano, short pr
 
 | | Stops at call | Money gone | What you learn |
 |---|---|---|---|
-| Budget cap, model not in the price table | never (200,000) | ~$107 | nothing — cost recorded as $0 |
+| Budget cap, model not in the price table | never (200,000) | ~$107 | nothing — cost recorded as `None`/$0 |
 | Budget cap, price registered, cap = $20 | ~37,000 | $20 | "Current cost: 20.0, Max budget: 20" |
 | **Offby** | **10** | **~$0.01** | "`output_tokens` at 8.6× forecast · 87% of completion tokens are reasoning · with `enable_thinking: false` projected $18.9" |
 
 Illustrative numbers; prices as published by Nebius Token Factory for Nemotron-3-Nano.
+
+**Offby is not a tool for spending less; it is a tool for batches that finish as planned.** The fixed run above still spends $18.7 — money that would otherwise have gone overrun → killed halfway → refund request → next batch somewhere else. That is why vendors build caps themselves (OpenAI 2026-07 "one of the most requested features", Google 2026-03, Cloudflare 2026-06): predictable spend is what puts batches on a platform.
+
+**Token Factory today (surveyed 2026-09-09):** no spend cap (the `billing threshold` triggers an auto-charge, [billing](https://docs.tokenfactory.nebius.com/other-capabilities/billing-new.md)) · no alerts · per-key usage "In Review" for over a year on the [ideas board](https://ideas.nebius.com/p/usage-per-api-key-in-ai-studio) · the [observability page](https://docs.tokenfactory.nebius.com/ai-models-inference/observability.md) says it is "not billing reconciliation" · [rate limits](https://docs.tokenfactory.nebius.com/ai-models-inference/rate-limits.md) auto-raise 20% every 15 minutes. For Token Factory users Offby is not a finer layer but the only one — which is why a per-key cap feature request goes in alongside it.
 
 ## Three ways in
 
@@ -186,7 +190,7 @@ To run the same flow as an agent skill, put `skills/offby/SKILL.md` in your harn
 | `nvidia/nemotron-3-super-120b` | Diagnose the breach from the evidence bundle; propose a corrected forecast | once per breach, not per call |
 | Nebius Token Factory | live prices, `usage` with reasoning and cached tokens, rate-limit headers | the measurement surface *is* the sponsor API |
 
-The sponsor is also the subject: Nemotron thinks by default and bills the trace as output tokens. The demo overrun is measured, not staged.
+Nemotron 3 ships the knob (`enable_thinking`, reasoning-budget control) that makes the same prompt 3-4× cheaper. Offby is what tells you, within the first ten calls, that you forgot to turn it — and the number `lessons` keeps ("thinking multiplies this model's output 4.3×") is how to use the model well, not a complaint about it. The demo overrun is measured, not staged.
 
 **First measurement (2026-09-09, local `nemotron-3-nano:4b` Q4 via Ollama, 120 reviews classified, $0):** the official chat template defaults `enable_thinking` to True. Thinking on: completion median 144 · mean 217 · p95 559 · max 848 (85% reasoning, lognormal σ≈0.6); thinking off (`reasoning_effort: none`): 67 → **3.2× (mean)**. The "8.6×" in the table above is an illustration for the 30B with long answers; the real multiplier depends on model and prompt. Ollama puts no `reasoning_tokens` in usage (Offby estimated from the `reasoning` field), ignores `chat_template_kwargs` and reads `reasoning_effort` — the off switch differs per server. A run on the same 4B with output mis-forecast at 60 was halted at **4.7× after 42 calls** (what t > 2.5 confidence costs on a heavy tail; $0.003 spent by then). The 4B was not enough for diagnosis (it blamed latency and missed the 88% reasoning share) or sentence parsing (120 reviews → calls=1).
 
@@ -196,15 +200,19 @@ The sponsor is also the subject: Nemotron thinks by default and bills the trace 
 
 Keep the cap. Offby does not replace it — it stands **next to it.** If the cap is the sprinkler, Offby is the smoke detector.
 
-| | Gateway budget (LiteLLM etc.) | Offby |
-|---|---|---|
-| Detects on | cumulative dollars | rate vs **your forecast**, per term |
-| Earliest stop | when the budget is gone (and only if the model is in the price table) | call 10 |
-| The error says | current spend vs limit | which term, how many ×, why |
-| Identity | a key (who spent, monthly) | a URL path (is this run on plan) |
-| Stores | spend log / request log | `usage` only — never prompts or completions |
+Per-run dollar ceilings already exist — [Cloudflare AI Gateway spend limits](https://developers.cloudflare.com/ai-gateway/features/spend-limits/) (2026-06, split by metadata, 429), [LiteLLM `max_budget_per_session`](https://docs.litellm.ai/docs/a2a_iteration_budgets) (429), per-key limits on [OpenRouter](https://openrouter.ai/docs/api_reference/limits) and [Vercel](https://vercel.com/changelog/budgets-for-api-keys-on-ai-gateway). Offby is the layer on top of them.
 
-Checked against LiteLLM docs and source on 2026-09-06: enforcement is a pre-call check on cumulative spend, the exceeded message names only entity, current cost and limit, and the bundled price table has no Nemotron 3 entry, so cost is `None` unless you register a price. A LiteLLM plugin mode (`CustomLogger` pre-call hook) is on the roadmap so teams with a gateway can add the referee without a second proxy.
+| | Gateway ceiling (Cloudflare · LiteLLM session · per-key limit) | Offby |
+|---|---|---|
+| Basis | an operator-set dollar ceiling — sized at or above the expected cost, so it fires after **~100% of the intended spend** | rate vs **your forecast**, per term — measured halts at 8–35% of the run (calls 11–42) |
+| The error says | "Current cost: 20.0, Max budget: 20" | `output_tokens 3.1x (60→185, t=2.6)` plus a diagnosis |
+| Model not in the price table | cost `None`/$0 → the ceiling never fires | shown as `UNPRICED` on the first line; token terms are still judged |
+| Identity | a key (who spent) | a URL path (is this run on plan) |
+| Stores | spend / request logs | `usage` only — never prompts or completions |
+
+The honest gap: different in kind, small in code — LiteLLM already has the hooks, a session counter and a projection function, so this layer fits in one CustomLogger. That is why plugin mode is week 3 on the roadmap.
+
+Checked against LiteLLM docs and source on 2026-09-06: enforcement is a pre-call check on cumulative spend, the exceeded message names only entity, current cost and limit, and the bundled price table has no Nemotron 3 entry, so cost is `None` unless you register a price. A 2026-09-09 survey (12 providers, 10 gateways, batch platforms, FinOps) found nobody taking a per-run forecast, testing it per term and naming the cause — and no cap or alert at all on Token Factory.
 
 ## Design rules
 
@@ -240,10 +248,10 @@ offby jobs
 - [x] **Week 2** — breach engine, 402 body, `accept`, CLI, report
 - [x] **Week 2+** — named jobs and runs, `lessons`, agent skill
 - [x] **Week 2+ (9/9 audit)** — valid-calls-only judging · t-test rule · usage-missing event · honest pricing · embeddings metered · realistic mock defaults and the `hostile` profile
-- [ ] **Week 3** — `alert` mode + webhook, sticky halt and a budget term, O(1) judge and single-writer lock, HTTP control plane, history-based forecast, parser fallback chain measured, streaming diagnosis
-- [ ] **Week 4** — single-page UI: forecast card, gauges, terminal log, diagnosis panel, run drift
-- [ ] **Week 5** — hosted demo: three server-side jobs that break *different* terms, per-IP quota, daily spend ceiling, replay fallback
-- [ ] **Week 6** — LiteLLM plugin mode, README verified from a clean clone, 3-minute video, tooling feedback
+- [ ] **Week 3** — `alert` mode + webhook, **LiteLLM plugin mode (CustomLogger)**, sticky halt and a budget term, Nebius feature request (per-key cap, `reasoning_tokens` in usage)
+- [ ] **Week 4** — Token Factory measurement (a ≥$50 run, super think-on vs off, "what a $20 cap would have done on the same run"), O(1) judge and single-writer lock, HTTP control plane
+- [ ] **Week 5** — history-based forecast, streaming diagnosis, minimal hosted demo (tour mode only). The single-page UI is deferred — every absorbed competitor had one
+- [ ] **Week 6** — README verified from a clean clone, 3-minute video, tooling feedback
 - [ ] **Submit 10/28**
 
 ## Not built, by design
@@ -253,6 +261,8 @@ Mid-stream cut-off (verdicts at request boundaries) · multi-process / Redis cou
 ## Hackathon
 
 Track: **Best Apps and Agents**. What this repo satisfies: runtime calls to Nebius Token Factory · NVIDIA Nemotron 3 load-bearing (parsing + diagnosis) · Apache-2.0 public repo · hosted demo URL · video under 3 minutes · tooling feedback.
+
+The story is not "we cut your bill". It is: **the layer Token Factory does not have, built for Token Factory** — a referee that lets unattended batches finish as planned, the thing that tells you within ten calls that you forgot Nemotron's thinking knob, and a per-key cap feature request filed alongside. The video demos `alert` mode: "at call 10 it said 'output 4×, thinking is on'; the user turned it off and the run finished."
 
 ## License
 

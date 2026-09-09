@@ -23,11 +23,15 @@
 
 | | 멈추는 콜 | 나간 돈 | 알게 되는 것 |
 |---|---|---|---|
-| 예산 캡, 가격표에 없는 모델 | 안 멈춤 (200,000) | ~$107 | 없음 — 비용이 $0로 기록됨 |
+| 예산 캡, 가격표에 없는 모델 | 안 멈춤 (200,000) | ~$107 | 없음 — 비용이 기록되지 않음(`None`/$0) |
 | 예산 캡, 단가 등록, 캡 = $20 | ~37,000 | $20 | "Current cost: 20.0, Max budget: 20" |
 | **Offby** | **10** | **~$0.01** | "`output_tokens` 예보의 8.6배 · completion 토큰의 87%가 reasoning · `enable_thinking: false`면 투영 $18.9" |
 
 수치는 예시. 단가는 Nebius Token Factory에 게시된 Nemotron-3-Nano 기준.
+
+**Offby는 지출을 줄이는 도구가 아니라 배치가 계획대로 끝나게 하는 도구다.** 위 시나리오에서 고친 run도 $18.7을 쓴다 — 그 돈은 폭주 → 중간에 죽임 → 환불 요청 → 다음 배치는 다른 곳으로, 가 됐을 돈이다. 벤더들이 캡을 직접 만드는 이유(OpenAI 2026-07 "가장 많이 요청받은 기능", Google 2026-03, Cloudflare 2026-06)와 같다: 예측 가능해야 배치를 올린다.
+
+**Token Factory 현황 (2026-09-09 조사):** 지출 캡 없음(`billing threshold`는 자동 결제 트리거, [billing](https://docs.tokenfactory.nebius.com/other-capabilities/billing-new.md)) · 알림 없음 · 키별 usage는 [아이디어 보드](https://ideas.nebius.com/p/usage-per-api-key-in-ai-studio)에 1년 넘게 "In Review" · [관측 페이지](https://docs.tokenfactory.nebius.com/ai-models-inference/observability.md)가 스스로 "billing reconciliation용 아님" · [레이트리밋](https://docs.tokenfactory.nebius.com/ai-models-inference/rate-limits.md)은 15분마다 +20%씩 자동 상향. Token Factory 유저에게 Offby는 더 정밀한 층이 아니라 유일한 층이고, 그래서 키별 캡 기능 요청을 같이 낸다.
 
 ## 어떻게 쓰나 — 입구 셋
 
@@ -189,7 +193,7 @@ uv run offby job ensure classify-reviews -y   # 내일: 같은 이름 = 새 run,
 | `nvidia/nemotron-3-super-120b` | 증거 묶음에서 이탈 원인 진단 + 수정 예보 | 콜마다가 아니라 이탈마다 한 번 |
 | Nebius Token Factory | 라이브 단가, reasoning·캐시 토큰이 든 `usage`, rate-limit 헤더 | 측정 표면이 곧 스폰서 API |
 
-스폰서가 곧 피험자다: Nemotron은 기본 think-on이고 trace를 출력 토큰으로 청구한다. 데모의 오버런은 연출이 아니라 측정이다.
+Nemotron 3에는 생각을 켜고 끄는 손잡이가 있다(`enable_thinking`, reasoning budget 제어) — 그래서 같은 프롬프트가 3~4배 싸질 수 있다. Offby는 그 손잡이를 잊었을 때 첫 10여 콜에서 알려주는 도구이고, `lessons`가 남기는 "이 모델은 thinking이 출력을 4.3배로 만든다"는 숫자는 모델을 잘 쓰는 법이지 모델을 탓하는 말이 아니다. 데모의 오버런은 연출이 아니라 측정이다.
 
 **첫 실측 (2026-09-09, 로컬 `nemotron-3-nano:4b` Q4 via Ollama, 리뷰 120건 분류, 비용 $0):** 공식 chat template의 `enable_thinking` 기본값은 True. think-on일 때 completion 중앙값 144 · 평균 217 · p95 559 · max 848 (reasoning 비중 85%, lognormal σ≈0.6), think-off(`reasoning_effort: none`)면 67 → **배수 3.2×(평균)**. 위 표의 "8.6배"는 30B·긴 답변 가정의 예시이고, 실제 배수는 모델·프롬프트에 달렸다. Ollama는 usage에 `reasoning_tokens`를 주지 않아 `reasoning` 필드로 추정했고, `chat_template_kwargs`는 무시하고 `reasoning_effort`만 읽는다 — 끄는 플래그는 서버마다 다르다. 같은 4B로 출력을 60으로 잘못 예보한 run은 **4.7×를 42콜에서** 세웠다(꼬리가 긴 분포에서 t > 2.5 확신을 얻는 데 든 콜 수; 그때까지 $0.003). 4B는 진단(reasoning 88%를 못 보고 지연 탓을 함)과 문장 파싱(120건을 1건으로)에는 부족했다.
 
@@ -199,15 +203,19 @@ uv run offby job ensure classify-reviews -y   # 내일: 같은 이름 = 새 run,
 
 예산 캡은 있어야 한다. Offby는 캡을 대체하지 않는다 — **옆에 선다.** 캡이 스프링클러라면 Offby는 연기 감지기다.
 
-| | LiteLLM 등 게이트웨이 예산 | Offby |
-|---|---|---|
-| 감지 단위 | 누적 달러 | **네 예보** 대비 속도, 항별 |
-| 가장 빠른 정지 | 예산이 소진될 때(그것도 모델이 가격표에 있을 때만) | 10콜 |
-| 에러가 말하는 것 | 현재 지출 vs 한도 | 어느 항이 몇 배 틀렸고 왜인지 |
-| 정체성 | 키 (누가 썼나, 월 누적) | URL 경로 (이 실행이 예보대로 가나) |
-| 저장하는 것 | 지출 로그 / 요청 로그 | `usage`만 — 프롬프트·응답 절대 저장 안 함 |
+런 단위 달러 천장은 이미 있다 — [Cloudflare AI Gateway spend limits](https://developers.cloudflare.com/ai-gateway/features/spend-limits/)(2026-06, metadata로 잡 분리, 429), [LiteLLM `max_budget_per_session`](https://docs.litellm.ai/docs/a2a_iteration_budgets)(429), [OpenRouter](https://openrouter.ai/docs/api_reference/limits)·[Vercel](https://vercel.com/changelog/budgets-for-api-keys-on-ai-gateway) 키별 한도. Offby는 그 위에 얹히는 층이다.
 
-2026-09-06 LiteLLM 문서·소스 확인: 예산 집행은 누적 지출의 선호출 검사, 초과 메시지는 엔티티·현재 비용·한도만 말함, 번들 가격표에 Nemotron 3 항목이 없어 단가를 직접 넣지 않으면 비용이 `None`으로 기록됨. 이미 게이트웨이를 운영하는 팀이 두 번째 프록시 없이 심판을 얹을 수 있게 LiteLLM 플러그인 모드(`CustomLogger` pre-call hook)가 로드맵에 있다.
+| | 게이트웨이 천장 (Cloudflare · LiteLLM 세션 · 키별 한도) | Offby |
+|---|---|---|
+| 기준 | 운영자가 정한 달러 상한 — 예상 비용 이상으로 잡아야 하므로 **의도한 지출의 ~100%를 쓴 뒤** 멈춤 | **네 예보** 대비 비율, 항별 — 실측에서 런의 8~35%(11~42콜)에서 멈춤 |
+| 에러가 말하는 것 | "Current cost: 20.0, Max budget: 20" | `output_tokens 3.1x (60→185, t=2.6)` + 진단 |
+| 가격표에 없는 모델 | 비용 `None`/$0 → 천장이 울리지 않음 | `UNPRICED`로 첫 줄에 표시, 토큰 항은 그대로 판정 |
+| 정체성 | 키 (누가 썼나) | URL 경로 (이 실행이 예보대로 가나) |
+| 저장하는 것 | 지출·요청 로그 | `usage`만 — 프롬프트·응답 절대 저장 안 함 |
+
+정직한 갭: 종류는 다르지만 코드는 작다 — LiteLLM은 훅·세션 카운터·투영 함수를 이미 갖고 있어서 이 층은 CustomLogger 하나로 들어간다. 그래서 로드맵의 플러그인 모드가 3주차다.
+
+2026-09-06 LiteLLM 문서·소스 확인: 예산 집행은 누적 지출의 선호출 검사, 초과 메시지는 엔티티·현재 비용·한도만 말함, 번들 가격표에 Nemotron 3 항목이 없어 단가를 직접 넣지 않으면 비용이 `None`으로 기록됨. 2026-09-09 시장 조사(제공사 12곳·게이트웨이 10곳·배치 플랫폼·FinOps): 런 예보를 받아 항별로 검정하고 원인을 이름 붙이는 곳은 없었고, Token Factory에는 캡·알림 자체가 없었다.
 
 ## 설계 규칙
 
@@ -243,10 +251,10 @@ offby jobs
 - [x] **2주** — 이탈 엔진, 402 본문, `accept`, CLI, report
 - [x] **2주+** — 이름 붙은 잡과 run, `lessons`, 에이전트 스킬
 - [x] **2주+ (9/9 감사 반영)** — 유효 콜만 판정 · t-검정 규칙 · usage 없음 이벤트 · 가격 정직화 · embeddings 계측 · 현실적 mock 기본값과 `hostile` 프로파일
-- [ ] **3주** — `alert` 모드 + 웹훅, sticky halt와 예산 항, O(1) 심판과 단일 writer 락, HTTP 컨트롤 플레인, 이력 기반 자동 예보, 예보 파서 폴백 실측, 진단 스트리밍
-- [ ] **4주** — 단일 페이지 UI: 예보 카드, 게이지, 터미널 로그, 진단 패널, run 드리프트
-- [ ] **5주** — 호스팅 데모: 서로 다른 항이 깨지는 서버측 잡 3종, IP당 쿼터, 일일 지출 상한, 리플레이 폴백
-- [ ] **6주** — LiteLLM 플러그인 모드, 클린 클론에서 README 검증, 3분 영상, 툴링 피드백
+- [ ] **3주** — `alert` 모드 + 웹훅, **LiteLLM 플러그인 모드(CustomLogger)**, sticky halt와 예산 항, Nebius 기능 요청(키별 캡·usage의 `reasoning_tokens`) 제출
+- [ ] **4주** — Token Factory 실측(≥$50 run, super think-on vs off, "같은 run에 $20 캡이었다면"), O(1) 심판과 단일 writer 락, HTTP 컨트롤 플레인
+- [ ] **5주** — 이력 기반 자동 예보, 진단 스트리밍, 호스팅 데모는 최소형(tour mode만). 단일 페이지 UI는 보류 — 흡수된 경쟁자들이 전부 가졌던 것
+- [ ] **6주** — 클린 클론에서 README 검증, 3분 영상, 툴링 피드백
 - [ ] **10/28 제출**
 
 ## 의도적으로 안 만드는 것
@@ -256,6 +264,8 @@ offby jobs
 ## 해커톤
 
 트랙: **Best Apps and Agents**. 이 레포가 충족할 요건: Nebius Token Factory 런타임 호출 · NVIDIA Nemotron 3 모델이 load-bearing(파싱 + 진단) · Apache-2.0 공개 레포 · 호스팅 데모 URL · 3분 미만 영상 · 툴링 피드백.
+
+서사는 "청구서를 깎아준다"가 아니다. **Token Factory에 없는 층을 Token Factory를 위해 만들었다** — 무인 배치가 계획대로 끝나게 하는 심판, Nemotron의 thinking 손잡이를 잊었을 때 첫 10콜에서 알려주는 도구, 그리고 키별 캡 기능 요청 동봉. 영상의 데모는 `alert` 모드로: "10콜에서 '출력이 4배, thinking 켜져 있음'이라고 알려줬고, 사용자가 끄고 완주했다."
 
 ## 라이선스
 

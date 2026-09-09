@@ -61,6 +61,7 @@ def create_app(
     inflight: dict[str, int] = {}
     unmetered_streak: dict[str, int] = {}
     tasks: set[asyncio.Task] = set()  # keep references, or the diagnosis task can be garbage-collected mid-flight
+    judge_ms: dict = {"n": 0, "sum": 0.0, "max": 0.0, "last": 0.0}
     app.state.store, app.state.client = store, client
 
     # ---------- helpers ----------
@@ -220,8 +221,14 @@ def create_app(
                 log.warning(json.dumps({"event": "baseline_locked", "job": job_id, "terms": terms}))
         if not terms:
             return
+        t_j = time.perf_counter()
         v = J.judge(terms, calls, min_calls=job["min_calls"], threshold=job["threshold"],
                     since=job.get("judge_from") or 0, run_since=run_from)
+        dt = (time.perf_counter() - t_j) * 1000
+        judge_ms["n"] += 1; judge_ms["sum"] += dt; judge_ms["last"] = dt; judge_ms["max"] = max(judge_ms["max"], dt)
+        if judge_ms["n"] % 500 == 0:
+            log.warning(json.dumps({"event": "judge_timing", "calls": len(calls), "last_ms": round(dt, 1),
+                                    "mean_ms": round(judge_ms["sum"] / judge_ms["n"], 1), "max_ms": round(judge_ms["max"], 1)}))
         if v.breached:
             halt(job_id, job, v.term, v, key)
 
@@ -230,7 +237,9 @@ def create_app(
     async def healthz():
         return {"ok": True, "upstream": upstream,
                 "price_oracle": "ok" if prices["data"] else (prices["error"] or "not fetched"),
-                "inflight": {k: n for k, n in inflight.items() if n}}
+                "inflight": {k: n for k, n in inflight.items() if n},
+                "judge_ms": {"n": judge_ms["n"], "mean": round(judge_ms["sum"] / judge_ms["n"], 2) if judge_ms["n"] else None,
+                             "max": round(judge_ms["max"], 2), "last": round(judge_ms["last"], 2)}}
 
     @app.get("/j/{job_id}/diagnosis")
     async def diagnosis(job_id: str):

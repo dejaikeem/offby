@@ -96,4 +96,6 @@ uv run offby lessons                        # 모델별로 "thinking이 출력�
 3. Nebius 키 → Token Factory 실측 (해커톤 전제)
 4. 밋업(9/11) 후: alert 모드·웹훅 → sticky halt·예산 강제 → O(1) 심판 → LiteLLM 플러그인 스파이크
 
-**결정 필요:** 심판이 "오탐 0" 대신 "더 빨리"를 택해야 하나(4.7배를 42콜에 잡는 게 느린가), halt 기본값을 alert로 바꿀 것인가, 해커톤 트랙(Best Apps & Agents 유지).
+**결정 필요:** 심판이 "오탐 0" 대신 "더 빨리"를 택해야 하나(4.7배를 42콜에 잡는 게 느린가), halt 기본값을 alert로 바꿀 것인가, 해커톤 트랙(Best Apps & Agents 유지), 레포 공개 시점(지금 private).
+
+**서사 결정 (2026-09-10):** 토큰을 파는 스폰서 앞에서 "청구서를 깎아준다"는 정반대로 읽힌다. Offby는 지출을 줄이는 도구가 아니라 **배치가 계획대로 끝나게 하는 도구**이고, Nemotron의 thinking 손잡이를 잊었을 때 알려주는 도구다. 데모는 halt가 아니라 alert로, 그리고 Token Factory에 없는 키별 캡 기능 요청을 같이 낸다. 시장 조사 전문은 `notes/2026-09-09-market-survey.md`(로컬).
