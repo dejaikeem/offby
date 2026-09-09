@@ -1,0 +1,31 @@
+[project]
+name = "offby"
+version = "0.0.1"
+description = "Forecast referee for LLM batch jobs: an OpenAI-compatible proxy that halts a job when observed usage breaks your stated forecast, and names the broken term."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+examples = ["openai>=1.40"]
+
+[project.scripts]
+offby = "offby.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "anyio>=4", "openai>=1.40"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/offby"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

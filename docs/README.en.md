@@ -2,81 +2,105 @@
 
 [![한국어](https://img.shields.io/badge/README-%ED%95%9C%EA%B5%AD%EC%96%B4-lightgrey?style=for-the-badge)](../README.md) [![English](https://img.shields.io/badge/README-English-2f6feb?style=for-the-badge)](README.en.md)
 
-**A forecast referee for LLM batch jobs.**
+**Forecast referee for LLM batch jobs.**
 
-You write one sentence about the job you are about to run. Offby turns it into five measurable terms, watches the job through an OpenAI-compatible proxy, and — if the numbers drift from what you said — stops the job around the tenth call and **names the assumption that broke**. Not after the budget is gone.
+Before you run, you say what you expect. Offby watches the job and, the moment the numbers disagree with you — at about the tenth call, not after the budget is gone — it halts the job and **names the assumption that broke.**
 
-> **Status: design → build.** Entry for the [Nebius × NVIDIA Global AI Hackathon](https://nebiusglobalaihackathon.devpost.com/) (submissions close 2026-10-30). This README is the contract; code lands weekly. Nothing below is shipped until its roadmap checkbox is ticked.
+> **Status: PoC runs against a mock upstream.** Token Factory measurements not yet done. Entry for the [Nebius × NVIDIA Global AI Hackathon](https://nebiusglobalaihackathon.devpost.com/), deadline 2026-10-30. Nothing is shipped until the roadmap boxes are ticked.
 
 ---
 
-## The problem, in one table
+## The 30-second version
 
-A budget cap counts money. Money is the last thing to move.
+You get in a taxi and say "about twenty bucks, right?" At the third kilometre the meter says *"at this pace it's ninety — and what's off isn't the distance, it's the **toll**"* and pulls over. That is Offby.
 
-You post in Slack: *"200k-row classification pass tonight on nemotron-nano, short prompts, paragraph answers, under $20."* You are assuming ~250 output tokens per call. The model reasons before it answers, so you actually get ~2,150 — 8.6× your assumption.
+Budget caps count money. Money is the slowest number to move.
+
+You wrote in Slack: *"200k-row classification tonight on nemotron-nano, short prompts, paragraph answers, under $20."* You assumed ~250 output tokens per call. The model reasons before it answers, so it is ~2,150 — 8.6× your assumption.
 
 | | Stops at call | Money gone | What you learn |
 |---|---|---|---|
-| Budget cap, model not in its price table | never (200,000) | ~$107 | nothing — cost was recorded as $0 |
-| Budget cap, price configured, cap = $20 | ~37,000 | $20 | "Current cost: 20.0, Max budget: 20" |
-| **Offby** | **10** (halts at 25) | **~$0.01** | "`output_tokens` 8.6× forecast · 87% of completion tokens are reasoning · thinking is on by default → set `enable_thinking: false`, projected $18.9" |
+| Budget cap, model not in the price table | never (200,000) | ~$107 | nothing — cost recorded as $0 |
+| Budget cap, price registered, cap = $20 | ~37,000 | $20 | "Current cost: 20.0, Max budget: 20" |
+| **Offby** | **10** | **~$0.01** | "`output_tokens` at 8.6× forecast · 87% of completion tokens are reasoning · with `enable_thinking: false` projected $18.9" |
 
-Numbers are illustrative; Nemotron-3-Nano prices as listed on Nebius Token Factory. See [Why not just a budget cap?](#why-not-just-a-budget-cap)
+Illustrative numbers; prices as published by Nebius Token Factory for Nemotron-3-Nano.
+
+## Three ways in
+
+**1. Agent skill (recommended).** Batch code is mostly written by agents now. Drop [`skills/offby/SKILL.md`](../skills/offby/SKILL.md) into a harness like Claude Code and, right before the agent runs an LLM loop, the skill fires: **derive the forecast from the code → register the job → run through the proxy → on 402, read the diagnosis, fix the code, rerun.** Nobody types a forecast. The agent reads N, the prompt template and the model id from its own code, which beats guessing from a sentence.
+
+**2. CLI.** Create a named job and get a URL.
+```bash
+offby job ensure nightly-classify --calls 200000 --input 400 --output 250 --model nvidia/nemotron-3-nano-30b-a3b --budget 20
+OPENAI_BASE_URL=http://localhost:8402/j/nightly-classify/v1 python classify.py
+```
+Prefer a sentence? `offby forecast "200k rows tonight on nemotron-nano, short prompts, paragraph answers, under $20"` — nano turns it into five terms and badges anything you didn't state as `ASSUMED`, to confirm before anything runs.
+
+**3. cron / containers.** Run the proxy as a sidecar next to the job; one URL in the command line. Same name again = a new run.
+
+All three change exactly **one environment variable** on the job side. No SDK, no code change, no new key. The job's own API key passes straight through.
 
 ## How it works
 
 ```mermaid
 flowchart LR
   J[your job<br/>base_url → Offby] -->|request| P[Offby proxy<br/>/j/&lt;job&gt;/v1]
-  P -->|passthrough| TF[Nebius Token Factory<br/>nemotron-3-nano / super]
+  P -->|forwarded unchanged| TF[Nebius Token Factory<br/>nemotron-3-nano / super]
   TF -->|response + usage| P --> J
-  P --> M[(meter<br/>usage only, never prompts)]
+  P --> M[(meter<br/>usage only, no prompts)]
   M --> B{per-term check<br/>from call 10}
-  B -->|breach| H[HTTP 402 to the job<br/>names the broken term]
+  B -->|breach| H[HTTP 402 to the job<br/>with the broken term]
   B -->|breach| D[diagnosis<br/>nemotron-3-super]
 ```
 
-**1. One sentence → five terms.** `nemotron-3-nano-30b` parses your forecast into `calls`, `input_tokens/call`, `output_tokens/call`, `unit price`, `window`. Anything you did not state is badged `ASSUMED`. Prices for Token Factory models come live from `GET /v1/models?verbose=true`; a model Offby cannot price is `UNPRICED` and shown as the top finding — never $0. You confirm the five terms before anything is enforced.
-
-```json
-{"job":"j_7f3a","budget_usd":20,
- "terms":{
-  "calls":         {"value":200000,"source":"stated"},
-  "input_tokens":  {"value":400,   "source":"assumed","why":"short prompts"},
-  "output_tokens": {"value":250,   "source":"assumed","why":"paragraph answers"},
-  "price":         {"in_per_m":0.06,"out_per_m":0.24,"source":"oracle"},
-  "window":        {"end":"tonight","source":"stated"}}}
-```
-
-**2. Point the job at Offby.** One environment variable. No SDK, no code change.
-
-```bash
-OPENAI_BASE_URL=http://localhost:8402/j/j_7f3a/v1 python classify.py
-```
-
-**3. Referee from call 10.** For every term Offby compares the observed rate to your forecast and projects the total. A term is breached only when *both* the running mean and the last-5-call mean exceed the threshold (default 2×), so one long answer does not kill a job. On breach the job receives a real error it cannot ignore:
+1. **Forecast → five terms.** `calls · input tok/call · output tok/call · unit price · window`. Prices come live from `GET /v1/models?verbose=true`; an unknown model shows as `UNPRICED` at the top — never as $0.
+2. **Point the job at Offby.** One env var. Request bodies are forwarded untouched.
+3. **Referee from call 10.** Every response carries `usage`; per term, observed mean ÷ forecast. **Both the overall mean and the last-5 mean** must exceed the threshold (default 2×) — one long answer never kills a job. On breach, the next request gets a real error:
 
 ```http
 HTTP/1.1 402 Payment Required
 X-Offby-Halt: output_tokens
-X-Offby-Diagnosis: /j/j_7f3a/diagnosis
+X-Offby-Diagnosis: http://localhost:8402/j/nightly-classify/diagnosis
 
 {"error":{"type":"offby_term_breach","term":"output_tokens","ratio":8.6,
- "message":"term output_tokens breached 8.6x (250→2150) — halted at 25/200000; projected $103.2 vs $12.0",
- "resume":"offby accept j_7f3a output_tokens=2200"}}
+ "message":"term output_tokens breached 8.6x (250→2150) — halted at 25/200000; projected $103.2 vs $16.8",
+ "resume":"offby accept nightly-classify output_tokens=2200"}}
 ```
 
-**4. Diagnosis, only on breach.** `nemotron-3-super-120b` reads an evidence bundle — reasoning-token share (`usage.completion_tokens_details.reasoning_tokens`), retries and 429s, cached-input share, service tier, any model you never mentioned — and streams the mechanism, the top unknown-unknown, and a corrected forecast. You either `accept` the new number or fix the cause and rerun.
+4. **Diagnosis only on breach.** `nemotron-3-super` reads the evidence bundle (reasoning-token share, retries/429s, cached-input share, a model you never mentioned) and returns **mechanism · top unknown · fix**. Fix the cause and rerun (`offby accept <job>`), or accept the new number (`offby accept <job> output_tokens=2200`).
+
+**Zero model calls on the hot path.** Two per job at most: one parse (only if you wrote a sentence), one diagnosis per breach.
+
+## Vocabulary — job, call, run
+
+- **call** = one HTTP request. One row in `calls`.
+- **job** = every call that arrived under one URL (`/j/<name>/v1`), sharing one forecast. It is a SQLite row and a path segment — not a process, not a queue.
+- **run** = one execution, started each time you call `offby job ensure <name>` again. Counters, verdict and state reset; history is kept.
+- **The job does not know Offby exists.** It only sees a base_url. The proxy cannot kill the job's process; it returns 402, the SDK raises, the job stops on its own exception. A job that keeps calling anyway keeps getting 402 — and a halted job never reaches the upstream, so no money moves.
+
+## Where it fits, where it doesn't
+
+One assumption underneath everything: **tokens per call are roughly constant.** That is what makes "observed ÷ forecast, per call" meaningful.
+
+| Situation | Fit | Why |
+|---|---|---|
+| 200k reviews to classify, nightly embeddings, eval sweeps, document OCR, synthetic data | **yes** | same template × N rows |
+| An agent routine on cron, every day | **yes** | same name = new run; history becomes the forecast (roadmap) |
+| An agent fleet processing 5,000 tickets the same way | **yes** | repetitive shape |
+| One ReAct-style agent loop | so-so | unknown call count; context grows every turn so `input_tokens` legitimately multiplies. Use `--baseline` to catch sudden change only |
+| Interactive sessions someone is watching, chatbot serving traffic | **no** | no forecast, no shape, no end; a human is already in the loop. That is the gateway's per-key budget territory |
+
+Offby is for **runs nobody is watching.** Put it in front of a run someone is watching and it is not a referee, it is a nuisance.
 
 ## A job, start to finish
 
-**22:10** A on the data team posts in Slack: *"200k-row classification pass tonight on nemotron-nano, short prompts, paragraph answers, under $20."*
+**22:10** A on the data team: *"Classifying 200k reviews tonight on nemotron-nano. Short prompts, one-paragraph answers, should be under $20."*
 
-**22:11** She pastes the sentence as-is.
+**22:11** Paste the sentence.
 
 ```
-$ offby forecast "200k-row classification pass tonight on nemotron-nano, short prompts, paragraph answers, under $20" --budget 20
+$ offby forecast "200k reviews tonight on nemotron-nano, short prompts, paragraph answers, under $20" --budget 20
 
   term             forecast     source
   calls            200,000      stated
@@ -84,32 +108,17 @@ $ offby forecast "200k-row classification pass tonight on nemotron-nano, short p
   output tok/call  250          ASSUMED ← "paragraph answers"
   price $/M        0.06 / 0.24  token factory (live)
   window           tonight      stated
-  projected        $16.80       (< $20 ✓)
+  expected total   $16.80       (< $20 ✓)
 
-  2 terms are Offby's guesses. Enter to accept, or edit:  ↵
+  2 ASSUMED terms are Offby's guesses. Enter to accept, or type fixes:  ↵
   job j_7f3a created. base_url → http://localhost:8402/j/j_7f3a/v1
 ```
 
-250 sounds right to her; Enter. **One model call so far** (sentence → five terms).
+**22:12** One env var. `OPENAI_BASE_URL=http://localhost:8402/j/j_7f3a/v1 python classify.py`
 
-**22:12** One environment variable on the existing script.
+**22:12:40** Ten calls in. Output mean 2,137 ÷ forecast 250 = **8.5×**, last five 2,140 ÷ 250 = **8.6×** — both over threshold → breach. Calls, input, price on plan. Broken term: `output_tokens`. Spent so far $0.005; at this pace **$107.6**.
 
-```
-$ OPENAI_BASE_URL=http://localhost:8402/j/j_7f3a/v1 python classify.py
-```
-
-**22:12:40** The proxy records the `usage` object that rides on every response. Ten calls in:
-
-| call | prompt | completion | of which reasoning |
-|---|---|---|---|
-| 1 | 402 | 2,180 | 1,905 |
-| 2 | 398 | 2,090 | 1,820 |
-| … | … | … | … |
-| 10 | 411 | 2,150 | 1,870 |
-
-Verdict (arithmetic only): mean output 2,137 ÷ forecast 250 = **8.5×**; last-5 mean 2,140 ÷ 250 = **8.6×** — both over the 2× threshold → **breach**. Calls, input (mean 405) and price are on plan. The broken term is `output_tokens`, alone. Projection: $0.005 spent, **$107.6** if nothing changes.
-
-**22:13** The 25th request gets a 402. Her terminal:
+**22:13** The next request gets 402. A's terminal:
 
 ```
 openai.APIStatusError: 402 offby: term output_tokens breached 8.6x (250→2150)
@@ -117,84 +126,121 @@ openai.APIStatusError: 402 offby: term output_tokens breached 8.6x (250→2150)
   resume: offby accept j_7f3a output_tokens=2200   diagnosis: http://localhost:8402/j/j_7f3a
 ```
 
-**22:13** The diagnosis panel (second model call, `nemotron-3-super`):
+**22:13** Diagnosis (`nemotron-3-super`):
 
-> Broken term: **output**. 87% of completion tokens are reasoning (`usage.completion_tokens_details.reasoning_tokens`). `nemotron-3-nano` thinks by default — you priced a paragraph; it billed a trace plus a paragraph. Calls, input and price are on plan. **Fix**: `chat_template_kwargs.enable_thinking=false` → ~290 output tokens/call, projected **$18.9**.
+> Broken term: **output**. 87% of completion tokens are reasoning. `nemotron-3-nano` thinks by default — you priced a paragraph, it billed a trace plus a paragraph. **Fix**: `chat_template_kwargs.enable_thinking=false` → ~290 output/call, projected **$18.9**.
 
-**22:15** She adds the flag and reruns. Gauges go green past call 60. The job finishes at 3 a.m.; the bill is $18.7.
+**22:15** A adds the flag, runs `offby accept j_7f3a`, reruns. Green from call 60. Done at 3 a.m., billed $18.7.
 
-**The same night without Offby**
-- No cap → a **$107** invoice in the morning, and a log to dig through to learn why it was 6× off.
-- `max_budget=20` on a LiteLLM key → around 1 a.m., at call **~37,000**: `Budget has been exceeded! Current cost: 20.0, Max budget: 20`. 19% processed, $20 gone, and the same settings fail the same way on rerun. If nemotron-3 is missing from LiteLLM's price table the cap **never fires** (cost recorded as $0).
-- Cap on a shared team key → her job drains **the whole team's budget** overnight and other people's requests start failing.
-
-Offby did one thing: **compared the numbers you said to the numbers observed, term by term, and named the one that was wrong before the money left.**
+**Same night without Offby** — no cap: a $107 invoice in the morning. LiteLLM key with `max_budget=20`: stops at call ~37,000 around 1 a.m., 19% processed, $20 gone, same failure on the next run. Cap on a shared team key: A's job burns the whole team's budget and other people's requests get refused.
 
 ### Without a forecast — baseline mode
 
-Too lazy to write the sentence? `offby serve --baseline 10` uses the first ten calls as the baseline and only flags sudden shifts (2× per term). It cannot say "this differs from what you expected", but it will say "output tripled from call 50".
+`offby job ensure <name> --baseline 10`. The first ten calls become the reference; only sudden change (2× per term) is caught afterwards. It cannot say "this differs from what you expected", but it can say "output tripled from call 50".
 
-## What the models do here
+## Try it now (PoC)
 
-| | Role | Why this one |
+No key, no spend. The mock upstream answers like Nemotron — **thinking on by default**.
+
+```bash
+uv sync                                                              # Python 3.12, .venv
+uv run offby mock  --port 8499                                       # terminal 1: fake Token Factory
+uv run offby serve --port 8402 --upstream http://127.0.0.1:8499/v1   # terminal 2: the proxy
+```
+
+Terminal 3 — a sample job that classifies `examples/reviews.jsonl` (120 rows):
+
+```bash
+uv run offby job ensure classify-reviews --calls 120 --input 40 --output 250 \
+  --model nvidia/nemotron-3-nano-30b-a3b --budget 1 --upstream http://127.0.0.1:8499/v1 -y
+#   expected total $0.01 · base_url → http://localhost:8402/j/classify-reviews/v1
+
+OPENAI_BASE_URL=http://localhost:8402/j/classify-reviews/v1 uv run python examples/classify.py --data examples/reviews.jsonl
+#   after 10 calls: 402 offby: term output_tokens breached 8.6x (250→2150) — halted at 12/120; projected $0.0620 vs $0.0075
+
+uv run offby report classify-reviews       # per-term table · evidence (reasoning 87%) · diagnosis · resume command
+uv run offby accept classify-reviews       # cause fixed → judge again from the next call
+OPENAI_BASE_URL=http://localhost:8402/j/classify-reviews/v1 uv run python examples/classify.py --data examples/reviews.jsonl --no-think
+#   enable_thinking=false → ≈290 output → 120/120 pass
+
+uv run offby lessons                       # this model's thinking multiplies output ≈7× — use it in the next forecast
+uv run offby job ensure classify-reviews -y   # tomorrow: same name = new run, forecast kept
+```
+
+To run the same flow as an agent skill, put `skills/offby/SKILL.md` in your harness's skill folder (Claude Code: `.claude/skills/offby`). For the real Token Factory, set `NEBIUS_API_KEY` and drop `--upstream`. The meter keeps only usage numbers in `~/.offby/offby.sqlite` (or `$OFFBY_DB`).
+
+**Built** — proxy (non-streaming and streaming) · usage meter (SQLite) · price oracle (reads `/v1/models?verbose=true` tolerantly, else `UNPRICED`) · breach engine (10 calls · 2× · both means) · 402 body/headers · named jobs and runs (`job ensure`) · `accept` / `report` / `lessons` / `jobs` · baseline mode · nano forecast parsing · super diagnosis · mock upstream · agent skill · 24 tests.
+**Not yet** — Token Factory day-1 measurements (canonical model ids, whether `reasoning_tokens` is populated, which flag disables thinking, the real shape of the verbose price listing) · history-based auto-forecast · `alert` mode (notify, never 402) · streaming diagnosis · UI · LiteLLM plugin.
+
+## Where the models carry weight
+
+| | Role | Why this model |
 |---|---|---|
-| `nvidia/nemotron-3-nano-30b` | Parse a casual sentence into five typed terms with `ASSUMED` flags (structured output) | Cheap, fast, and the only step where natural language is irreducible |
-| `nvidia/nemotron-3-super-120b` | Diagnose a breach from the evidence bundle; write the corrected forecast | Runs once per breach, not per call |
-| Nebius Token Factory | Live price oracle (`/v1/models?verbose=true`), the `usage` object incl. reasoning and cached tokens, rate-limit headers | The metering surface *is* the sponsor API |
+| `nvidia/nemotron-3-nano-30b` | Casual sentence → five `ASSUMED`-badged terms (structured output) | cheap, fast, and the only step where natural language is unavoidable |
+| `nvidia/nemotron-3-super-120b` | Diagnose the breach from the evidence bundle; propose a corrected forecast | once per breach, not per call |
+| Nebius Token Factory | live prices, `usage` with reasoning and cached tokens, rate-limit headers | the measurement surface *is* the sponsor API |
 
-**There are zero model calls in the hot path.** The proxy reads the `usage` object that already rides on every response. Models are called exactly twice per job: once to parse the forecast, once per breach to explain it.
+The sponsor is also the subject: Nemotron thinks by default and bills the trace as output tokens. The demo overrun is measured, not staged.
 
 ## Why not just a budget cap?
 
-You should have a budget cap. Offby is not a replacement for one — it sits beside it.
+Keep the cap. Offby does not replace it — it stands **next to it.** If the cap is the sprinkler, Offby is the smoke detector.
 
-| | LiteLLM / gateway budgets | Offby |
+| | Gateway budget (LiteLLM etc.) | Offby |
 |---|---|---|
-| Unit of detection | dollars accumulated | rate vs. **your** forecast, per term |
-| Earliest stop | when the budget is spent (and only if the model is in the price table) | call 10 |
-| What the error says | current spend vs. max | which term broke, by how much, and why |
-| Needs | database, keys per job/team | one environment variable |
-| Stores | spend logs / request logs | `usage` only — never prompts or completions |
+| Detects on | cumulative dollars | rate vs **your forecast**, per term |
+| Earliest stop | when the budget is gone (and only if the model is in the price table) | call 10 |
+| The error says | current spend vs limit | which term, how many ×, why |
+| Identity | a key (who spent, monthly) | a URL path (is this run on plan) |
+| Stores | spend log / request log | `usage` only — never prompts or completions |
 
-Verified against the LiteLLM docs and source on 2026-09-06: budget enforcement is a pre-call check of accumulated spend (with optimistic reservation on recent versions); the breach message names the entity, current cost and max budget; the bundled price map had no Nemotron 3 entry, so cost for those models is recorded as `None` unless you add custom pricing. `soft_budget` alerts include a projection but never block. Offby's job is the part a cap structurally cannot do: **stop early, and say which assumption was wrong.** A LiteLLM plugin mode (`CustomLogger` pre-call hook) is on the roadmap so teams that already run a gateway get the referee without a second proxy.
+Checked against LiteLLM docs and source on 2026-09-06: enforcement is a pre-call check on cumulative spend, the exceeded message names only entity, current cost and limit, and the bundled price table has no Nemotron 3 entry, so cost is `None` unless you register a price. A LiteLLM plugin mode (`CustomLogger` pre-call hook) is on the roadmap so teams with a gateway can add the referee without a second proxy.
 
 ## Design rules
 
-- **Usage only.** The meter stores token counts, model id, status, latency, retry and rate-limit headers. Prompts and completions are never written.
-- **Never $0.** A model without a price is `UNPRICED` and shown first, not silently zero.
-- **Assumptions are visible and confirmed.** Every unstated term is `ASSUMED` with the phrase it came from, and the five terms are shown before enforcement starts.
-- **No verdict before 10 calls; two means must agree.** Long-tail outputs do not trigger a halt.
-- **Offby's 402 is not the upstream's 402.** Token Factory returns 402 when *your* balance is exhausted; Offby's carries `type: offby_term_breach` and `X-Offby-Halt` so the two are never confused.
-- **Fail open on request.** `--fail-open` passes traffic through if the meter itself is down; the referee must never be the thing that kills a healthy job.
-- **Reasoning tokens are unknown until observed.** If `completion_tokens_details` is null, Offby estimates from `reasoning_content` or `<think>` tags and labels the estimate; it never coerces null to 0.
+- **Usage only.** Token counts, model id, status, latency, rate-limit headers. There is no column for prompts or completions.
+- **Never $0.** An unpriced model shows as `UNPRICED` on the first line. It never silently becomes zero.
+- **Assumptions visible, confirmed before enforcement.** Every unstated term gets `ASSUMED` and its cue.
+- **No verdict before 10 calls; both means must agree.** With history behind it, one long-tail answer never halts a job. (Edge: exactly at call 10, a single answer tens of times too long can push both means over.)
+- **Resume resets the judging window.** After `accept`, only later calls are judged; otherwise a polluted mean halts the job again on the first call after the fix. Spend and projection still count the whole run.
+- **402 starts with the request *after* the breach.** The response that spent the money is returned as-is. With concurrency 8 you will see "verdict at 10, halt at 16".
+- **Offby's 402 is not the upstream's 402.** Token Factory returns 402 when *your* balance is exhausted. Offby's carries `type: offby_term_breach` and `X-Offby-Halt`; they never mix.
+- **Fail-open if you want it.** `--fail-open` passes traffic through if the meter itself dies. A referee must never kill a healthy job.
+- **Reasoning tokens are unknown until observed.** If `completion_tokens_details` is null, estimate from `reasoning_content` or `<think>` tags and mark it as an estimate.
 
-## Planned CLI
+## CLI
 
 ```bash
-offby serve   --upstream https://api.tokenfactory.nebius.com/v1     # the proxy
-offby forecast "200k-row classification tonight on nemotron-nano, short prompts, paragraph answers, under $20" --budget 20
-offby report  j_7f3a                                                 # per-term forecast vs observed, cost, diagnosis
-offby accept  j_7f3a output_tokens=2200                              # accept one term, resume
-offby serve   --baseline 10                                          # no forecast: first 10 calls set the baseline, flag sudden shifts
+offby serve    --upstream https://api.tokenfactory.nebius.com/v1 [--fail-open]   # the proxy
+offby mock     --port 8499                                                        # fake upstream (PoC)
+offby job ensure <name> --calls N --input I --output O --model <id> --budget B     # named job · again = new run
+offby job ensure <name> --baseline 10                                             # no forecast
+offby forecast "200k-row classification tonight on nemotron-nano, …" --budget 20  # one-off job, sentence parsing
+offby report   <name>                                                             # forecast vs observed per term, cost, diagnosis
+offby accept   <name> [output_tokens=2200]                                        # accept a term, or resume after fixing the cause
+offby lessons                                                                     # cross-job lessons — read before the next forecast
+offby jobs
 ```
 
 ## Roadmap
 
-- [ ] **Week 1** — proxy + meter + price oracle end to end; day-1 measurements on Token Factory (canonical model ids, is `reasoning_tokens` populated, which flag turns thinking off, does `json_schema` hold on nano)
-- [ ] **Week 2** — breach engine, 402 body, `accept`, CLI, report
-- [ ] **Week 3** — forecast parser with fallback chain (`json_schema` → `guided_json` → `json_object` + repair); streamed diagnosis
-- [ ] **Week 4** — single-page UI: forecast card, gauges, terminal log, diagnosis panel, receipts drawer
-- [ ] **Week 5** — hosted demo: three server-side prompt sets that break *different* terms, run queue, per-IP quota, daily spend ceiling, honest replay fallback
-- [ ] **Week 6** — LiteLLM plugin mode, README from clean clone, 3-minute video, tooling feedback
-- [ ] **Submit by Oct 28**
+- [x] **Week 1** — proxy + meter + price oracle end to end (mock upstream)
+- [ ] **Week 1** — Token Factory day-1 measurements (canonical model ids, whether `reasoning_tokens` is populated, which flag disables thinking, whether nano holds `json_schema`)
+- [x] **Week 2** — breach engine, 402 body, `accept`, CLI, report
+- [x] **Week 2+** — named jobs and runs, `lessons`, agent skill
+- [ ] **Week 3** — history-based forecast (the last healthy run of the same name), `alert` mode, parser fallback chain measured, streaming diagnosis
+- [ ] **Week 4** — single-page UI: forecast card, gauges, terminal log, diagnosis panel, run drift
+- [ ] **Week 5** — hosted demo: three server-side jobs that break *different* terms, per-IP quota, daily spend ceiling, replay fallback
+- [ ] **Week 6** — LiteLLM plugin mode, README verified from a clean clone, 3-minute video, tooling feedback
+- [ ] **Submit 10/28**
 
 ## Not built, by design
 
-Cutting a stream mid-response (verdicts happen at request boundaries) · multi-process / Redis counters · user accounts and key issuance · Batch API and cache-discount accounting (recorded as evidence, not priced) · prompt storage or replay queues · a frontend build step · upstreams other than OpenAI-compatible endpoints · automatic `accept`.
+Mid-stream cut-off (verdicts at request boundaries) · multi-process / Redis counters · user accounts or key issuance · Batch API and cache-discount accounting (recorded as evidence, not priced) · prompt storage or replay queues · a frontend build step · non-OpenAI-compatible upstreams · automatic `accept`.
 
 ## Hackathon
 
-Track: **Best Apps and Agents**. Requirements this repo will satisfy: runtime calls to Nebius Token Factory · NVIDIA Nemotron 3 models load-bearing (parse + diagnose) · public repository under Apache-2.0 · hosted demo URL · video under three minutes · tooling feedback.
+Track: **Best Apps and Agents**. What this repo satisfies: runtime calls to Nebius Token Factory · NVIDIA Nemotron 3 load-bearing (parsing + diagnosis) · Apache-2.0 public repo · hosted demo URL · video under 3 minutes · tooling feedback.
 
 ## License
 
