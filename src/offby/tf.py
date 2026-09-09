@@ -217,6 +217,7 @@ def build_evidence(job: dict, rows: list[dict], verdict) -> dict:
     metered = [r for r in rows if (r.get("status") or 0) < 400 and r.get("completion_tokens") is not None]
     truncated = sum(1 for r in metered if r.get("finish_reason") == "length")
     ev = {
+        "hypotheses": [],  # filled below: what the arithmetic already suggests
         "job": job["id"],
         "sentence": job.get("sentence"),
         "budget_usd": job.get("budget_usd"),
@@ -243,17 +244,46 @@ def build_evidence(job: dict, rows: list[dict], verdict) -> dict:
             for k, t in verdict.terms.items()
         },
     }
+    ev["hypotheses"] = hypotheses(ev)
     return ev
+
+
+def hypotheses(ev: dict) -> list[str]:
+    """What the numbers alone say. The diagnosis model starts from these and confirms or refutes."""
+    hs: list[str] = []
+    term = ev.get("breached_term")
+    rs = ev.get("reasoning_share")
+    if term == "output_tokens" and rs is not None and rs >= 0.5:
+        hs.append(f"{rs:.0%} of billed completion tokens are a reasoning trace: the model thinks before answering and the "
+                  "trace is billed as output. Fix: disable thinking (chat_template_kwargs.enable_thinking=false on vLLM/Token Factory, "
+                  "reasoning_effort='none' on Ollama) or forecast the trace.")
+    ts = ev.get("truncated_share")
+    if ts:
+        hs.append(f"{ts:.0%} of answers hit max_tokens (finish_reason=length): the cap is bounding cost by cutting answers.")
+    fc_model = ((ev.get("forecast") or {}).get("model") or {}).get("value")
+    seen = ev.get("models_seen") or []
+    if fc_model and seen and all(m != fc_model and m.split("/")[-1] != fc_model.split("/")[-1] for m in seen):
+        hs.append(f"responses came from {seen}, not the forecast model {fc_model!r}: an alias or a swapped model.")
+    if term == "input_tokens":
+        hs.append("input tokens per call exceed the forecast: longer items than the sample, a tools/system preamble, or growing context.")
+    errs = ev.get("errors") or {}
+    if errs:
+        hs.append(f"upstream errors during the run: {errs} (not counted as calls).")
+    if not hs and term:
+        hs.append(f"{term} exceeded the forecast; nothing in the usage numbers singles out a mechanism.")
+    return hs
 
 
 DIAG_SYSTEM = (
     "You are Offby's diagnosis engine for an LLM batch job that was halted because observed usage "
-    "broke the user's forecast. You get only numbers (usage objects, never prompts). "
+    "broke the user's forecast. You get only numbers (usage objects, never prompts), plus a list of "
+    "'hypotheses' the arithmetic already supports. Start from the hypotheses: confirm the one the numbers "
+    "back, or refute it with a specific number. Do not restate the forecast as a fix. "
     "Answer in at most 120 words, plain text, three labelled lines: "
-    "MECHANISM: the single most likely cause of the broken term, citing the numbers. "
+    "MECHANISM: the single most likely cause of the broken term, citing the numbers (reasoning_share, truncated_share, models_seen, ratios). "
     "UNKNOWN: the top thing the user never stated that matters here. "
-    "FIX: one concrete change (a request parameter, a model id, or an accepted new forecast value) "
-    "and the projected total after it, as arithmetic from the evidence."
+    "FIX: one concrete change to the REQUEST (a parameter such as enable_thinking/reasoning_effort/max_tokens, or a model id) "
+    "or an accepted new forecast value, and the projected total after it as arithmetic from the evidence."
 )
 
 

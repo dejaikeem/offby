@@ -191,7 +191,9 @@ uv run offby job ensure classify-reviews -y   # 내일: 같은 이름 = 새 run,
 
 스폰서가 곧 피험자다: Nemotron은 기본 think-on이고 trace를 출력 토큰으로 청구한다. 데모의 오버런은 연출이 아니라 측정이다.
 
-**첫 실측 (2026-09-09, 로컬 `nemotron-3-nano:4b` Q4 via Ollama, 리뷰 120건 분류, 비용 $0):** 공식 chat template의 `enable_thinking` 기본값은 True. think-on일 때 completion 중앙값 144 · 평균 217 · p95 559 · max 848 (reasoning 비중 85%, lognormal σ≈0.6), think-off(`reasoning_effort: none`)면 67 → **배수 3.2×(평균)**. 위 표의 "8.6배"는 30B·긴 답변 가정의 예시이고, 실제 배수는 모델·프롬프트에 달렸다. Ollama는 usage에 `reasoning_tokens`를 주지 않아 `reasoning` 필드로 추정했고, `chat_template_kwargs`는 무시하고 `reasoning_effort`만 읽는다 — 끄는 플래그는 서버마다 다르다. 같은 4B로 출력을 60으로 잘못 예보한 run은 **4.7×를 42콜에서** 세웠다(꼬리가 긴 분포에서 t > 2.5 확신을 얻는 데 든 콜 수; 그때까지 $0.003). 4B는 진단(reasoning 88%를 못 보고 지연 탓을 함)과 문장 파싱(120건을 1건으로)에는 부족했다 — 그 두 자리에 Super가 필요하다는 가정이 맞았다. Token Factory의 30B 실측은 아직.
+**첫 실측 (2026-09-09, 로컬 `nemotron-3-nano:4b` Q4 via Ollama, 리뷰 120건 분류, 비용 $0):** 공식 chat template의 `enable_thinking` 기본값은 True. think-on일 때 completion 중앙값 144 · 평균 217 · p95 559 · max 848 (reasoning 비중 85%, lognormal σ≈0.6), think-off(`reasoning_effort: none`)면 67 → **배수 3.2×(평균)**. 위 표의 "8.6배"는 30B·긴 답변 가정의 예시이고, 실제 배수는 모델·프롬프트에 달렸다. Ollama는 usage에 `reasoning_tokens`를 주지 않아 `reasoning` 필드로 추정했고, `chat_template_kwargs`는 무시하고 `reasoning_effort`만 읽는다 — 끄는 플래그는 서버마다 다르다. 같은 4B로 출력을 60으로 잘못 예보한 run은 **4.7×를 42콜에서** 세웠다(꼬리가 긴 분포에서 t > 2.5 확신을 얻는 데 든 콜 수; 그때까지 $0.003). 4B는 진단(reasoning 88%를 못 보고 지연 탓을 함)과 문장 파싱(120건을 1건으로)에는 부족했다.
+
+**같은 날, 로컬 `nemotron-3-nano:30b` (Q4, 24GB, ~50 tok/s):** think-on 중앙값 205 · 평균 404 · p95 2,092 · max 4,000(캡) — 4B보다 꼬리가 훨씬 길다(σ≈0.9). 예보 250 대비 1.6배라 **멈추지 않음(옳음)**. think-off 89 → **배수 4.3×(평균)**. 출력 60 오예보는 **11콜에서 402** (3.1×, t=2.6, 지출 $0.0006). 30B는 **문장 파싱 5항을 전부 정확히** 뽑았고(4B는 실패), 진단은 evidence에 산술로 뽑은 `hypotheses`를 넣어주자 "reasoning 96%가 출력으로 청구됨 → `reasoning_effort='none'`"을 정확히 짚었다(넣기 전엔 예보를 되풀이함). Token Factory의 30B 실측은 아직.
 
 ## 왜 예산 캡만으로 안 되나
 

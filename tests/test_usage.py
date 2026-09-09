@@ -16,9 +16,15 @@ def test_reasoning_null_stays_none_without_evidence():
 
 
 def test_reasoning_estimated_from_think_tag():
-    u = U.from_response({"model": "m", "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+    u = U.from_response({"model": "m", "usage": {"prompt_tokens": 10, "completion_tokens": 200},
                          "choices": [{"message": {"content": "<think>" + "x" * 400 + "</think>answer"}}]})
     assert u.reasoning_tokens == 100 and u.reasoning_estimated is True
+
+
+def test_estimated_reasoning_never_exceeds_billed_completion():
+    u = U.from_response({"model": "m", "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+                         "choices": [{"message": {"content": "<think>" + "x" * 400 + "</think>answer"}}]})
+    assert u.reasoning_tokens == 20 and u.reasoning_estimated is True
 
 
 def test_no_usage_returns_none():

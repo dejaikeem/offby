@@ -94,6 +94,8 @@ def from_response(body: dict) -> Usage | None:
     # input_tokens/output_tokens: Responses-API and Anthropic-shaped usage objects
     prompt = usage.get("prompt_tokens", usage.get("input_tokens"))
     completion = usage.get("completion_tokens", usage.get("output_tokens"))
+    if estimated and reasoning is not None and isinstance(completion, int):
+        reasoning = min(reasoning, completion)  # chars/4 overshoots; the trace cannot exceed what was billed
     return Usage(
         model=body.get("model"),
         prompt_tokens=prompt,
@@ -138,7 +140,9 @@ def from_sse(text: str) -> Usage | None:
     if usage_chunk is not None:
         u = from_response({"model": model, "usage": usage_chunk["usage"], "choices": []})
         if u and u.reasoning_tokens is None and reasoning_chars:
-            u.reasoning_tokens, u.reasoning_estimated = max(1, reasoning_chars // 4), True
+            est = max(1, reasoning_chars // 4)
+            u.reasoning_tokens = min(est, u.completion_tokens) if isinstance(u.completion_tokens, int) else est
+            u.reasoning_estimated = True
         if u:
             u.finish_reason, u.error_status = finish, error
         return u

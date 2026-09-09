@@ -23,7 +23,7 @@ src/offby/
   cli.py       offby 명령어: job ensure / forecast / serve / report / accept / lessons / jobs / mock
 skills/offby/SKILL.md          Claude Code 같은 에이전트가 배치를 돌리기 전에 Offby를 쓰게 하는 스킬
 examples/classify.py           샘플 배치 (리뷰 120건 감정 분류). reviews.jsonl은 합성 데이터
-tests/                         45개. `uv run pytest`
+tests/                         46개. `uv run pytest`
 ```
 
 저장소에 **없는** 것: `notes/`(설계 회의록·감사 결과·실험 로그 — `.gitignore`로 로컬 전용), 내 노트북의 Ollama 모델 파일.
@@ -32,7 +32,7 @@ tests/                         45개. `uv run pytest`
 
 | 층 | 뭘로 | 증명하는 것 | 증명 못 하는 것 |
 |---|---|---|---|
-| **유닛테스트 45개** | `judge()`에 가짜 숫자 리스트, 프록시+mock을 한 프로세스 안에서 연결 | 배관이 맞게 이어졌나, 심판 산수가 맞나 | 실제 모델이 어떻게 행동하나 |
+| **유닛테스트 46개** | `judge()`에 가짜 숫자 리스트, 프록시+mock을 한 프로세스 안에서 연결 | 배관이 맞게 이어졌나, 심판 산수가 맞나 | 실제 모델이 어떻게 행동하나 |
 | **mock 업스트림** | `offby mock` — 모델 없이 "그럴듯한 usage 숫자"를 지어내는 가짜 서버 | 예보→실행→402→report→accept→재실행 흐름 전체. 에러·스트리밍·가격 모양이 이상할 때의 동작 | 실제 출력 길이 분포, thinking이 진짜 켜져 있나 |
 | **진짜 모델 (로컬)** | Ollama + `nemotron-3-nano:4b`, 내 노트북, 비용 $0 | 실제 분포에서 오탐이 없나, 진짜 402가 나오나, usage 모양이 우리 파서와 맞나 | Token Factory의 30B가 같은지 (실측 아직) |
 
@@ -58,7 +58,8 @@ tests/                         45개. `uv run pytest`
 - **thinking on/off 배수: 평균 3.2×** (on: 중앙값 144·평균 217·p95 559·max 848, reasoning 비중 85% / off: 67). README의 "8.6배"는 30B·긴 답변 가정의 **예시**이지 실측이 아니다.
 - **오탐 없음**: 예보 250에 max 848(3.4배)이 섞여 들어와도 t = −14.8, 멈추지 않음. 새 규칙의 첫 실물 통과.
 - **진짜 첫 402**: 출력을 60으로 잘못 예보한 run → `4.7x (60→285, t=3.1) — halted at 42/120`, 그때까지 $0.003. 꼬리가 긴 분포에서 확신을 얻느라 10콜이 아니라 42콜. 더 빠른 규칙(CUSUM)은 로드맵.
-- **4B는 진단·문장 파싱엔 부족**: 진단은 reasoning 88%를 못 보고 지연 탓, 파싱은 "120 reviews"를 1건으로. 이 두 자리엔 Super급이 필요하다는 설계 가정이 맞았다.
+- **4B는 진단·문장 파싱엔 부족**: 진단은 reasoning 88%를 못 보고 지연 탓, 파싱은 "120 reviews"를 1건으로.
+- **30B (`nemotron-3-nano:30b`, 24GB, 같은 날 저녁):** 속도는 4B와 같음(~50 tok/s, MoE). think-on 평균 404·p95 2,092·max 4,000(캡) — 꼬리가 훨씬 김. 예보 250 대비 1.6배라 안 멈춤(옳음). **배수 4.3×.** 오예보 60은 **11콜에서 402**. **문장 파싱 5항 전부 정확**, 진단도 evidence에 산술 가설을 넣어주자 정확("reasoning 96% → `reasoning_effort='none'`"). 즉 파싱·진단 자리는 30B급이면 된다.
 
 ## 6. 아직 안 된 것 — 정직하게
 
@@ -66,7 +67,7 @@ tests/                         45개. `uv run pytest`
 - 멈춘 걸 사람에게 알리는 수단 없음(로그 한 줄뿐) — `alert` 모드와 웹훅 필요.
 - **halt가 sticky하지 않다**: `offby job ensure`를 다시 부르면 halt가 풀린다. 끝내고 싶은 에이전트가 우회 가능. 예산(`--budget`)도 표시만 되고 강제되지 않는다.
 - 심판이 콜마다 run 전체를 다시 계산(O(n)) — 1만 콜 이후 느려진다. 프록시 2개가 같은 DB를 보면 각자 따로 센다.
-- 진단·문장 파싱은 실제 Super에서 한 번도 안 돌았다(4B로는 실패).
+- 진단·문장 파싱은 로컬 30B로만 확인했다(4B 실패, 30B 성공). Token Factory의 Super에서는 아직.
 - 이력 기반 자동 예보(같은 이름의 지난 run이 예보), UI, LiteLLM 플러그인 — 로드맵.
 
 ## 7. 직접 돌려보기 (5분, 돈 안 듦)
@@ -90,7 +91,7 @@ uv run offby lessons                        # 모델별로 "thinking이 출력�
 
 ## 8. 다음 단계와 결정 필요한 것
 
-1. (진행 중) `nemotron-3-nano:30b`(24GB) 로컬로 같은 3-run 반복 → 30B의 배수·파싱·진단 가능 여부
+1. ~~`nemotron-3-nano:30b` 로컬 3-run~~ 완료 (위 5절)
 2. 야간 1만 건 배치 + 중간 급변 주입 → 장기 run 감지 속도, 심판 성능 측정
 3. Nebius 키 → Token Factory 실측 (해커톤 전제)
 4. 밋업(9/11) 후: alert 모드·웹훅 → sticky halt·예산 강제 → O(1) 심판 → LiteLLM 플러그인 스파이크
