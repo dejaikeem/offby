@@ -1,0 +1,73 @@
+[00:42:34 +0m] PHASE 0 start ollama (NUM_PARALLEL=4) + proxy
+[00:42:35 +0m] PHASE 0 job ensure (forecast from lessons: 30b think-on mean ≈400)
+  expected total   $0.5904              budget $5 ✓                 
+  job overnight-30b: new run started (0 calls in history, forecast updated)
+[00:42:35 +0m] PHASE A rows 0-1999, default prompt, thinking on — expect NO halt (false-halt test at scale). cap 3h
+[03:42:35 +180m] PHASE A exit=142 ;   1350/2000 classified
+  overnight-30b  RUNNING
+
+  term           forecast  observed  last 5  ratio  t        
+  -------------  --------  --------  ------  -----  -----  --
+  calls          6,000     1,351     1,351   0.23x         ok
+  input_tokens   40        43        40      1.08x  -45.3  ok
+  output_tokens  400       414       268     1.04x  -2.3   ok
+  price          1.0x      —         —       —      —      — 
+
+  calls this run 1351, with usage 1351  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.1378  expected $0.5904  projected $0.6119  (priced at the forecast rate — upstream lists no price; 1351 calls)
+
+{"ok":true,"upstream":"http://127.0.0.1:11434/v1","price_oracle":"not fetched","inflight":{"overnight-30b":4},"judge_ms":{"n":1351,"mean":1.62,"max":4.23,"last":3.02}}
+[03:42:36 +180m] calls after A: 1351
+[03:42:36 +180m] PHASE B rows 2000+, LONG prompt, thinking on — expect halt within ~10-40 calls (regime change after 1351 healthy calls). cap 1h
+[04:42:36 +240m] PHASE B exit=142 ; 
+  overnight-30b  RUNNING
+
+  term           forecast  observed  last 5  ratio  t        
+  -------------  --------  --------  ------  -----  -----  --
+  calls          6,000     1,568     1,568   0.26x         ok
+  input_tokens   40        47        67      1.17x  -12.8  ok
+  output_tokens  400       479       1,005   1.20x  0.7    ok
+  price          1.0x      —         —       —      —      — 
+
+  calls this run 1568, with usage 1568  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.1845  expected $0.5904  projected $0.7060  (priced at the forecast rate — upstream lists no price; 1568 calls)
+
+[04:43:06 +240m] calls after B: 1568 (B used 217 calls before the halt)
+[04:43:06 +240m] PHASE C accept (cause fixed) + rows 2000-5999, default prompt, thinking OFF — judge-timing growth. cap = remaining 149m
+  overnight-30b resumed (terms unchanged; judging restarts from the next call)
+[06:47:08 +364m] PHASE C exit=0 ; done: 4000/4000
+  overnight-30b  RUNNING
+
+  term           forecast  observed  last 5  ratio  t        
+  -------------  --------  --------  ------  -----  -----  --
+  calls          6,000     4,001     4,001   0.67x         ok
+  input_tokens   40        43        42      1.08x  -61.8  ok
+  output_tokens  400       90        83      0.22x  -40.7  ok
+  price          1.0x      —         —       —      —      — 
+
+  calls this run 5569, with usage 5569, judging the last 4001  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.2810  expected $0.5904  projected $0.3291  (priced at the forecast rate — upstream lists no price; 5569 calls)
+
+{"ok":true,"upstream":"http://127.0.0.1:11434/v1","price_oracle":"not fetched","inflight":{},"judge_ms":{"n":5569,"mean":3.94,"max":9.4,"last":9.0}}
+[06:47:09 +364m] STATS
+[A think-on default] n=1351 ok=1351 err=0 completion median=216 mean=414 p95=1359 max=4000 σ=0.84 length-cut=23 latency median=22.9s p95=89.7s
+[B think-on long prompt] n=217 ok=217 err=0 completion median=716 mean=880 p95=2168 max=4000 σ=0.70 length-cut=1 latency median=63.6s p95=101.1s
+[C think-off default] n=4001 ok=4001 err=0 completion median=79 mean=90 p95=188 max=2690 σ=1.07 length-cut=0 latency median=7.0s p95=11.6s
+[06:47:09 +364m] events:       11
+{"event": "judge_timing", "calls": 500, "last_ms": 1.1, "mean_ms": 0.8, "max_ms": 1.4}
+{"event": "judge_timing", "calls": 1000, "last_ms": 2.3, "mean_ms": 1.3, "max_ms": 2.4}
+{"event": "judge_timing", "calls": 1500, "last_ms": 3.0, "mean_ms": 1.8, "max_ms": 4.2}
+{"event": "judge_timing", "calls": 2000, "last_ms": 1.9, "mean_ms": 1.7, "max_ms": 4.2}
+{"event": "judge_timing", "calls": 2500, "last_ms": 2.7, "mean_ms": 1.9, "max_ms": 4.2}
+{"event": "judge_timing", "calls": 3000, "last_ms": 3.5, "mean_ms": 2.1, "max_ms": 4.2}
+{"event": "judge_timing", "calls": 3500, "last_ms": 4.0, "mean_ms": 2.4, "max_ms": 6.9}
+{"event": "judge_timing", "calls": 4000, "last_ms": 5.0, "mean_ms": 2.7, "max_ms": 7.2}
+{"event": "judge_timing", "calls": 4500, "last_ms": 6.6, "mean_ms": 3.1, "max_ms": 8.0}
+{"event": "judge_timing", "calls": 5000, "last_ms": 7.0, "mean_ms": 3.5, "max_ms": 9.2}
+{"event": "judge_timing", "calls": 5500, "last_ms": 8.8, "mean_ms": 3.9, "max_ms": 9.4}
+
+  MODELS (from usage objects; 'thinking' = reasoning_tokens > 0)
+  - nemotron-3-nano:30b: 5,821 calls, $0.06/0.24 per M (forecast price), input mean 44, output mean 471 with thinking (1701 calls), 89 without (4120 calls) → thinking multiplies output ≈5.3x
+  - nemotron-3-nano:4b: 283 calls, $0.06/0.24 per M (forecast price), input mean 37, output mean 234 with thinking (163 calls), 67 without (120 calls) → thinking multiplies output ≈3.5x
+
+[06:47:09 +364m] DONE total 364m — ollama and proxy stopped

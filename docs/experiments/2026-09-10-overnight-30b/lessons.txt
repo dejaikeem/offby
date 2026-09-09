@@ -1,0 +1,5 @@
+
+  MODELS (from usage objects; 'thinking' = reasoning_tokens > 0)
+  - nemotron-3-nano:30b: 5,821 calls, $0.06/0.24 per M (forecast price), input mean 44, output mean 471 with thinking (1701 calls), 89 without (4120 calls) → thinking multiplies output ≈5.3x
+  - nemotron-3-nano:4b: 283 calls, $0.06/0.24 per M (forecast price), input mean 37, output mean 234 with thinking (163 calls), 67 without (120 calls) → thinking multiplies output ≈3.5x
+

@@ -1,0 +1,13 @@
+
+  overnight-30b  RUNNING
+
+  term           forecast  observed  last 5  ratio  t        
+  -------------  --------  --------  ------  -----  -----  --
+  calls          6,000     1,351     1,351   0.23x         ok
+  input_tokens   40        43        40      1.08x  -45.3  ok
+  output_tokens  400       414       268     1.04x  -2.3   ok
+  price          1.0x      —         —       —      —      — 
+
+  calls this run 1351, with usage 1351  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.1378  expected $0.5904  projected $0.6119  (priced at the forecast rate — upstream lists no price; 1351 calls)
+

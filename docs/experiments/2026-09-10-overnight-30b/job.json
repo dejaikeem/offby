@@ -1,0 +1,41 @@
+{
+ "id": "overnight-30b",
+ "created_at": 1788968504.148428,
+ "sentence": null,
+ "budget_usd": 5.0,
+ "terms": {
+  "calls": {
+   "value": 6000,
+   "source": "stated"
+  },
+  "input_tokens": {
+   "value": 40,
+   "source": "stated"
+  },
+  "output_tokens": {
+   "value": 400,
+   "source": "stated"
+  },
+  "model": {
+   "value": "nemotron-3-nano:30b",
+   "source": "stated"
+  },
+  "price": {
+   "in_per_m": 0.06,
+   "out_per_m": 0.24,
+   "source": "stated",
+   "model": "nemotron-3-nano:30b"
+  }
+ },
+ "state": "running",
+ "halted_term": null,
+ "baseline_n": null,
+ "min_calls": 10,
+ "threshold": 2.0,
+ "judge_from": 1568,
+ "run_from": 0,
+ "halted_at": null,
+ "evidence": null,
+ "diagnosis_status": null,
+ "diagnosis": null
+}

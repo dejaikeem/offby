@@ -1,0 +1,1 @@
+{"ok":true,"upstream":"http://127.0.0.1:11434/v1","price_oracle":"not fetched","inflight":{"overnight-30b":4},"judge_ms":{"n":1351,"mean":1.62,"max":4.23,"last":3.02}}
