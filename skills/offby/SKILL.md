@@ -27,8 +27,9 @@ Check the proxy: `curl -s localhost:8402/healthz`. If it is not up, start it in 
 
 **3. Derive the forecast from the code, not from a guess.**
 - `calls` = number of items the loop will process (count the data file's rows, the list length, the query's row count). Say how you counted.
-- `input_tokens` = (system prompt + user template + one typical item) in characters ÷ 4. Sample one real item.
-- `output_tokens` = what the prompt asks for (a label ≈ 5, a sentence ≈ 30, a paragraph ≈ 250) — the *billed* output, so include a reasoning trace if the model thinks by default and the code does not turn it off.
+- `input_tokens` = (system prompt + user template + the MEAN item) in characters ÷ 4. Compute the mean over the whole data file (`total chars / rows / 4`), not from one sample — one long item must not set the bar, and one short one must not trip it.
+- `output_tokens` = the *billed* MEAN, not a typical answer: a label ≈ 5, a sentence ≈ 30, a paragraph ≈ 250, then add the reasoning trace if the model thinks by default and the code does not turn it off. Real output lengths are heavy-tailed (mean ≈ 1.3-1.5× the median); the judge tests the mean with a confidence bound, so forecast the mean.
+- Set `max_tokens` in the code to ≈ 1.5× the forecast output. A cap keeps a runaway answer from billing 4,000 tokens; Offby records `finish_reason=length` so truncation shows up in `report` instead of hiding.
 - `model` = the exact id in the code. Prices come from the proxy's oracle; never type a price from memory. If the oracle cannot price it, pass `--price in,out` only with a source you can cite, else leave it UNPRICED.
 - `budget` = what the user said, or ask.
 
@@ -44,8 +45,8 @@ OPENAI_BASE_URL=http://localhost:8402/j/<name>/v1 <the command>
 ```
 The job's own API key still goes in the request; the proxy passes it through.
 
-**6. If the job dies with `402 … offby: term X breached …` (exit code 3 in the example runner):**
-- `uv run offby report <name>` — read the per-term table, the evidence line, and the diagnosis.
+**6. After ANY exit — success, crash, or `402 … offby_term_breach: term X breached …` (exit code 3 in the example runner) — run `uv run offby report <name>`.** A client that catches exceptions per row can finish "green" with the job HALTED underneath; the report is the truth. HALTED, or `failed calls`/`no usage object` lines, mean the run did not do what the forecast said. Then:
+- Read the per-term table (the `t` column is the confidence: >2.5 decided the halt), the evidence line, and the diagnosis.
 - Prefer fixing the cause in the code (e.g. `chat_template_kwargs.enable_thinking=false`, a smaller `max_tokens`, the intended model id). Then `uv run offby accept <name>` (no terms) and rerun — judging restarts from the next call.
 - If the observed number is legitimate, `uv run offby accept <name> X=<value>` — but first show the new expected total; if it now exceeds the budget, ask the user rather than accepting.
 - Never loop accept→rerun more than twice without telling the user what changed.
@@ -57,4 +58,6 @@ The job's own API key still goes in the request; the proxy passes it through.
 - List every `ASSUMED` term to the user; never silently accept one.
 - Do not quote model numbers (prices, context length, whether it thinks) from memory. The meter measured them or it did not.
 - The proxy stores usage only — never prompts or completions. Do not add prompt logging to it.
-- Offby's 402 has `X-Offby-Halt`; an upstream 402 (balance exhausted) does not. Read the header before deciding what happened.
+- Offby's 402 has `X-Offby-Halt` and its message starts with `offby_term_breach:`; an upstream 402 (balance exhausted) has neither. Read the header before deciding what happened.
+- `X-Offby-Halt: usage` means five responses in a row carried no usage object — the upstream cannot be refereed as configured (often a gateway that drops `stream_options`). That is a setup problem, not a cost overrun; do not `accept` your way past it.
+- For a mock run, `lessons` will show model ids prefixed `mock/` — those numbers are the mock's constants, not measurements. Never carry them into a real forecast.

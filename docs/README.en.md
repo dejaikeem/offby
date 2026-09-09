@@ -56,7 +56,7 @@ flowchart LR
 
 1. **Forecast → five terms.** `calls · input tok/call · output tok/call · unit price · window`. Prices come live from `GET /v1/models?verbose=true`; an unknown model shows as `UNPRICED` at the top — never as $0.
 2. **Point the job at Offby.** One env var. Request bodies are forwarded untouched.
-3. **Referee from call 10.** Every response carries `usage`; per term, observed mean ÷ forecast. **Both the overall mean and the last-5 mean** must exceed the threshold (default 2×) — one long answer never kills a job. On breach, the next request gets a real error:
+3. **Referee from the 10th valid call.** Every response carries `usage`; per term, the ratio observed ÷ forecast accumulates. A term breaches only when the mean ratio over the judged window **or** over the last 30 calls exceeds the threshold (default 2×) **with confidence, t > 2.5** — real output lengths are heavy-tailed (p95 ≈ 3.6× the median), and one long answer never kills a job (0% in simulation). Error responses and usage-less responses never enter a mean; they are tallied separately. On breach, the next request gets a real error:
 
 ```http
 HTTP/1.1 402 Payment Required
@@ -64,13 +64,15 @@ X-Offby-Halt: output_tokens
 X-Offby-Diagnosis: http://localhost:8402/j/nightly-classify/diagnosis
 
 {"error":{"type":"offby_term_breach","term":"output_tokens","ratio":8.6,
- "message":"term output_tokens breached 8.6x (250→2150) — halted at 25/200000; projected $103.2 vs $16.8",
- "resume":"offby accept nightly-classify output_tokens=2200"}}
+ "message":"offby_term_breach: term output_tokens breached 8.6x (250→2150, t=4.1) — halted at 25/200,000 (judged at 10, 15 were in flight); projected $103.20 vs $16.80",
+ "resume":"offby accept nightly-classify output_tokens=2150","errors":{"429":2},"unmetered":0}}
 ```
 
 4. **Diagnosis only on breach.** `nemotron-3-super` reads the evidence bundle (reasoning-token share, retries/429s, cached-input share, a model you never mentioned) and returns **mechanism · top unknown · fix**. Fix the cause and rerun (`offby accept <job>`), or accept the new number (`offby accept <job> output_tokens=2200`).
 
 **Zero model calls on the hot path.** Two per job at most: one parse (only if you wrote a sentence), one diagnosis per breach.
+
+Referee numbers (lognormal simulation shaped like real reasoning output, calling `judge.py` directly): healthy jobs false-halt **0%** (spike rate up to 2%), 0% when the forecast is the mean, a single 4,000-token answer anywhere from n=10 to 30 halts **0%**; an 8× overrun is caught at call 10, **8× after 1,000 healthy calls in 11 calls** (the old overall-mean rule needed 286), 2.5× in 24, a 30%-of-items-10× bimodal in 33, a 1→3× drift in 128.
 
 ## Vocabulary — job, call, run
 
@@ -90,6 +92,7 @@ One assumption underneath everything: **tokens per call are roughly constant.** 
 | An agent fleet processing 5,000 tickets the same way | **yes** | repetitive shape |
 | One ReAct-style agent loop | so-so | unknown call count; context grows every turn so `input_tokens` legitimately multiplies. Use `--baseline` to catch sudden change only |
 | Interactive sessions someone is watching, chatbot serving traffic | **no** | no forecast, no shape, no end; a human is already in the loop. That is the gateway's per-key budget territory |
+| An upstream that ignores `stream_options.include_usage` | **partly** | tokens are estimated from the streamed text (and flagged); five usage-less responses in a row halt with `X-Offby-Halt: usage` — never a silent pass |
 
 Offby is for **runs nobody is watching.** Put it in front of a run someone is watching and it is not a referee, it is a nuisance.
 
@@ -116,14 +119,14 @@ $ offby forecast "200k reviews tonight on nemotron-nano, short prompts, paragrap
 
 **22:12** One env var. `OPENAI_BASE_URL=http://localhost:8402/j/j_7f3a/v1 python classify.py`
 
-**22:12:40** Ten calls in. Output mean 2,137 ÷ forecast 250 = **8.5×**, last five 2,140 ÷ 250 = **8.6×** — both over threshold → breach. Calls, input, price on plan. Broken term: `output_tokens`. Spent so far $0.005; at this pace **$107.6**.
+**22:12:40** Ten valid calls in. Output mean 2,137 ÷ forecast 250 = **8.5×**, and steadily so (t = 4.1 > 2.5) → breach. Calls, input, price on plan. Broken term: `output_tokens`. Spent so far $0.005; at this pace **$107.6**.
 
 **22:13** The next request gets 402. A's terminal:
 
 ```
-openai.APIStatusError: 402 offby: term output_tokens breached 8.6x (250→2150)
-  — halted at 25/200000; projected $107.6 vs $16.80.
-  resume: offby accept j_7f3a output_tokens=2200   diagnosis: http://localhost:8402/j/j_7f3a
+openai.APIStatusError: 402 offby: offby_term_breach: term output_tokens breached 8.6x (250→2150, t=4.1)
+  — halted at 25/200,000 (judged at 10, 15 were in flight); projected $107.60 vs $16.80
+  resume: offby accept j_7f3a output_tokens=2150   diagnosis: http://localhost:8402/j/j_7f3a/diagnosis
 ```
 
 **22:13** Diagnosis (`nemotron-3-super`):
@@ -140,7 +143,7 @@ openai.APIStatusError: 402 offby: term output_tokens breached 8.6x (250→2150)
 
 ## Try it now (PoC)
 
-No key, no spend. The mock upstream answers like Nemotron — **thinking on by default**.
+No key, no spend. The mock upstream answers like Nemotron — **thinking on by default** — and its defaults look like reality: lognormal output lengths (σ 0.8), ~1 s ± 50% per call, `finish_reason: length` when `max_tokens` cuts an answer. `--profile hostile` adds 10% 429/500s, reasoning delivered as `reasoning_content`, canonical model ids, and per-token price strings. Model ids start with `mock/` so `lessons` never mistakes them for measurements. `--latency-ms 0` for speed.
 
 ```bash
 uv sync                                                              # Python 3.12, .venv
@@ -156,7 +159,8 @@ uv run offby job ensure classify-reviews --calls 120 --input 40 --output 250 \
 #   expected total $0.01 · base_url → http://localhost:8402/j/classify-reviews/v1
 
 OPENAI_BASE_URL=http://localhost:8402/j/classify-reviews/v1 uv run python examples/classify.py --data examples/reviews.jsonl
-#   after 10 calls: 402 offby: term output_tokens breached 8.6x (250→2150) — halted at 12/120; projected $0.0620 vs $0.0075
+#   after 10 valid calls: 402 offby: offby_term_breach: term output_tokens breached 8.9x (250→2234, t=4.1)
+#                         — halted at 10/120; projected $0.0646 vs $0.0075     (numbers vary a little each run — heavy tail)
 
 uv run offby report classify-reviews       # per-term table · evidence (reasoning 87%) · diagnosis · resume command
 uv run offby accept classify-reviews       # cause fixed → judge again from the next call
@@ -167,10 +171,12 @@ uv run offby lessons                       # this model's thinking multiplies ou
 uv run offby job ensure classify-reviews -y   # tomorrow: same name = new run, forecast kept
 ```
 
+A sentence forecast works against the mock too (it answers the parse prompt): `uv run offby forecast "classify 120 reviews tonight on nemotron-nano, short prompts, paragraph answers, under $1" --budget 1 --upstream http://127.0.0.1:8499/v1 --api-key mock`. For hostile conditions start `uv run offby mock --port 8499 --profile hostile` and repeat the flow — `report` grows lines like `failed calls: 4 (429)` and `reasoning share 87% (estimated)`.
+
 To run the same flow as an agent skill, put `skills/offby/SKILL.md` in your harness's skill folder (Claude Code: `.claude/skills/offby`). For the real Token Factory, set `NEBIUS_API_KEY` and drop `--upstream`. The meter keeps only usage numbers in `~/.offby/offby.sqlite` (or `$OFFBY_DB`).
 
-**Built** — proxy (non-streaming and streaming) · usage meter (SQLite) · price oracle (reads `/v1/models?verbose=true` tolerantly, else `UNPRICED`) · breach engine (10 calls · 2× · both means) · 402 body/headers · named jobs and runs (`job ensure`) · `accept` / `report` / `lessons` / `jobs` · baseline mode · nano forecast parsing · super diagnosis · mock upstream · agent skill · 24 tests.
-**Not yet** — Token Factory day-1 measurements (canonical model ids, whether `reasoning_tokens` is populated, which flag disables thinking, the real shape of the verbose price listing) · history-based auto-forecast · `alert` mode (notify, never 402) · streaming diagnosis · UI · LiteLLM plugin.
+**Built** — proxy (non-streaming and streaming; meters chat/completions, completions, embeddings, responses) · usage meter (SQLite, with `finish_reason`) · price oracle (unit table for `/v1/models`; `"0"`, absent and ambiguous tails are `UNPRICED`) · breach engine (10 valid calls · 2× · t > 2.5 over the judged window OR the last 30) · errors / usage-less / estimated tallied apart · five usage-less in a row → `X-Offby-Halt: usage` · 402 body/headers (`X-Should-Retry: false`) · named jobs and runs (`job ensure`) · `accept` / `report` / `lessons` / `jobs` · baseline mode (median) · nano forecast parsing · super diagnosis (empty answers are `unavailable`) · realistic mock (tail, latency, errors, 4 reasoning shapes, 4 pricing shapes, `--profile hostile`) · agent skill · 43 tests.
+**Not yet** — Token Factory day-1 measurements (canonical model ids, whether `reasoning_tokens` is populated, which flag disables thinking, the real shape of the verbose price listing) · `alert` mode (webhook/log, never 402) · webhook · sticky halt and an enforced budget (`job ensure` can walk around a halt today) · O(1) judging (today every call re-scores the whole run) · multi-proxy safety · HTTP control plane · history-based auto-forecast · streaming diagnosis · UI · LiteLLM plugin.
 
 ## Where the models carry weight
 
@@ -201,9 +207,10 @@ Checked against LiteLLM docs and source on 2026-09-06: enforcement is a pre-call
 - **Usage only.** Token counts, model id, status, latency, rate-limit headers. There is no column for prompts or completions.
 - **Never $0.** An unpriced model shows as `UNPRICED` on the first line. It never silently becomes zero.
 - **Assumptions visible, confirmed before enforcement.** Every unstated term gets `ASSUMED` and its cue.
-- **No verdict before 10 calls; both means must agree.** With history behind it, one long-tail answer never halts a job. (Edge: exactly at call 10, a single answer tens of times too long can push both means over.)
+- **No verdict before 10 valid calls, and crossing the line is not enough — it must be confident.** The mean ratio has to exceed the threshold with t > 2.5 (over the judged window or the last 30 calls). Real outputs are heavy-tailed; the plain-mean rule killed 36-49% of healthy jobs. One long-tail answer never halts a job, at any point.
+- **Errors and usage-less responses are not calls.** 429/5xx enter neither a mean nor the `calls` term; they are shown as `failed calls`. A 2xx without usage is estimated from the streamed text (and flagged), and five in a row halt on the `usage` term — an upstream the referee cannot see is never silently passed.
 - **Resume resets the judging window.** After `accept`, only later calls are judged; otherwise a polluted mean halts the job again on the first call after the fix. Spend and projection still count the whole run.
-- **402 starts with the request *after* the breach.** The response that spent the money is returned as-is. With concurrency 8 you will see "verdict at 10, halt at 16".
+- **402 starts with the request *after* the breach.** The response that spent the money is returned as-is. Concurrency lets that many more through, and the 402 message says so: "judged at 10, 7 were in flight".
 - **Offby's 402 is not the upstream's 402.** Token Factory returns 402 when *your* balance is exhausted. Offby's carries `type: offby_term_breach` and `X-Offby-Halt`; they never mix.
 - **Fail-open if you want it.** `--fail-open` passes traffic through if the meter itself dies. A referee must never kill a healthy job.
 - **Reasoning tokens are unknown until observed.** If `completion_tokens_details` is null, estimate from `reasoning_content` or `<think>` tags and mark it as an estimate.
@@ -212,7 +219,7 @@ Checked against LiteLLM docs and source on 2026-09-06: enforcement is a pre-call
 
 ```bash
 offby serve    --upstream https://api.tokenfactory.nebius.com/v1 [--fail-open]   # the proxy
-offby mock     --port 8499                                                        # fake upstream (PoC)
+offby mock     --port 8499 [--profile hostile] [--latency-ms 0] [--tail-on 0.8]    # fake upstream (PoC)
 offby job ensure <name> --calls N --input I --output O --model <id> --budget B     # named job · again = new run
 offby job ensure <name> --baseline 10                                             # no forecast
 offby forecast "200k-row classification tonight on nemotron-nano, …" --budget 20  # one-off job, sentence parsing
@@ -228,7 +235,8 @@ offby jobs
 - [ ] **Week 1** — Token Factory day-1 measurements (canonical model ids, whether `reasoning_tokens` is populated, which flag disables thinking, whether nano holds `json_schema`)
 - [x] **Week 2** — breach engine, 402 body, `accept`, CLI, report
 - [x] **Week 2+** — named jobs and runs, `lessons`, agent skill
-- [ ] **Week 3** — history-based forecast (the last healthy run of the same name), `alert` mode, parser fallback chain measured, streaming diagnosis
+- [x] **Week 2+ (9/9 audit)** — valid-calls-only judging · t-test rule · usage-missing event · honest pricing · embeddings metered · realistic mock defaults and the `hostile` profile
+- [ ] **Week 3** — `alert` mode + webhook, sticky halt and a budget term, O(1) judge and single-writer lock, HTTP control plane, history-based forecast, parser fallback chain measured, streaming diagnosis
 - [ ] **Week 4** — single-page UI: forecast card, gauges, terminal log, diagnosis panel, run drift
 - [ ] **Week 5** — hosted demo: three server-side jobs that break *different* terms, per-IP quota, daily spend ceiling, replay fallback
 - [ ] **Week 6** — LiteLLM plugin mode, README verified from a clean clone, 3-minute video, tooling feedback

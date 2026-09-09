@@ -140,8 +140,10 @@ def _apply(terms: dict, k: str, v: str, *, source: str) -> None:
     if k in ("calls", "input_tokens", "output_tokens"):
         terms[k] = {"value": int(float(v)), "source": source}
     elif k == "price":
-        a, b = v.split("/") if "/" in v else v.split(":")
-        terms["price"] = {"in_per_m": float(a), "out_per_m": float(b), "source": source, "model": J.term_value(terms, "model")}
+        parts = re.split(r"[/:,]", v)
+        if len(parts) != 2:
+            raise SystemExit(f"price needs two numbers like price=0.06/0.24 (got {v!r})")
+        terms["price"] = {"in_per_m": float(parts[0]), "out_per_m": float(parts[1]), "source": source, "model": J.term_value(terms, "model")}
     elif k in ("model", "window"):
         terms[k] = {"value": v, "source": source}
     else:
@@ -214,7 +216,8 @@ def cmd_forecast(args) -> int:
 
 def _verdict(store: Store, job: dict) -> J.Verdict:
     rows = store.calls(job["id"])
-    calls = [J.Call(r["prompt_tokens"], r["completion_tokens"], r["in_per_m"], r["out_per_m"]) for r in rows]
+    calls = [J.Call(r["prompt_tokens"], r["completion_tokens"], r["in_per_m"], r["out_per_m"],
+                    status=r.get("status") or 200, estimated=bool(r.get("usage_estimated"))) for r in rows]
     return J.judge(job["terms"], calls, min_calls=job["min_calls"], threshold=job["threshold"],
                    since=job.get("judge_from") or 0, run_since=job.get("run_from") or 0)
 
@@ -241,10 +244,13 @@ def cmd_report(args) -> int:
         obs = "—" if t.observed is None else (f"{t.observed:.2f}x" if name == "price" else f"{t.observed:,.0f}")
         rec = "—" if t.recent is None else (f"{t.recent:.2f}x" if name == "price" else f"{t.recent:,.0f}")
         ratio = "—" if t.ratio is None else f"{t.ratio:.2f}x"
+        conf = "—" if t.t is None else (">99" if t.t >= J.T_CAP else ("<-99" if t.t <= -J.T_CAP else f"{t.t:.1f}"))
+        if name == "calls":
+            conf = ""
         status = _c(RED, "BREACH") if t.breached else ("—" if t.ratio is None else _c(GREEN, "ok"))
-        table.append([name, fc, obs, rec, ratio, status])
+        table.append([name, fc, obs, rec, ratio, conf, status])
     print()
-    print(_table(table, ["term", "forecast", "observed", "last 5", "ratio", ""]))
+    print(_table(table, ["term", "forecast", "observed", "last 5", "ratio", "t", ""]))
     money = f"  spent ${v.spent_usd:,.4f}"
     if v.expected_usd is not None:
         money += f"  expected ${v.expected_usd:,.2f}"
@@ -252,9 +258,19 @@ def cmd_report(args) -> int:
         money += f"  projected ${v.projected_usd:,.2f}"
     if v.unpriced_calls:
         money += _c(RED, f"  UNPRICED calls: {v.unpriced_calls}")
-    since = f", judging the last {v.judged}" if v.judged != v.n else ""
+    since = f", judging the last {v.judged}" if v.judged != v.valid else ""
     hist = f"  ({v.total:,} in history)" if v.total != v.n else ""
-    print(f"\n  calls this run {v.n}{since}{hist}  (verdict from {v.min_calls} calls, threshold {v.threshold:g}x)")
+    print(f"\n  calls this run {v.n}, with usage {v.valid}{since}{hist}  "
+          f"(verdict from {v.min_calls} valid calls, threshold {v.threshold:g}x, confidence t>{J.Z:g})")
+    if v.errors or v.unmetered or v.estimated:
+        parts = []
+        if v.errors:
+            parts.append("failed calls: " + ", ".join(f"{n} ({code})" for code, n in sorted(v.errors.items())))
+        if v.unmetered:
+            parts.append(f"no usage object: {v.unmetered}")
+        if v.estimated:
+            parts.append(f"tokens estimated from streamed text: {v.estimated}")
+        print("  " + _c(YELLOW, " · ".join(parts)))
     print(money)
     ev = job.get("evidence") or {}
     if ev:
@@ -262,6 +278,9 @@ def cmd_report(args) -> int:
         line = "  evidence:" if job["state"] == "halted" else "  last halt evidence:"
         if rs is not None:
             line += f" reasoning share of completion {rs:.0%}{' (estimated)' if ev.get('reasoning_estimated') else ''};"
+        ts = ev.get("truncated_share")
+        if ts:
+            line += f" answers cut by max_tokens {ts:.0%};"
         if ev.get("models_seen"):
             line += f" models {', '.join(ev['models_seen'])};"
         if ev.get("status_counts"):
@@ -271,10 +290,16 @@ def cmd_report(args) -> int:
         print(f"\n  diagnosis [{job['diagnosis_status']}]:")
         for ln in (job.get("diagnosis") or "").splitlines():
             print(f"    {ln}")
-    if job["state"] == "halted" and v.term and v.terms.get(v.term):
-        sug = J.suggest_accept(v.terms[v.term])
-        if sug is not None:
-            print(f"\n  resume: offby accept {job['id']} {v.term}={sug}   (or fix the cause and: offby accept {job['id']})")
+    if job["state"] == "halted":
+        term = job.get("halted_term")
+        tv = v.terms.get(term) if term else None
+        sug = J.suggest_accept(tv) if tv else None
+        if job.get("diagnosis_status") == "pending":
+            print("\n  diagnosis pending — run `offby report` again in a moment")
+        elif sug is not None:
+            print(f"\n  resume: offby accept {job['id']} {term}={sug}   (or fix the cause and: offby accept {job['id']})")
+        else:
+            print(f"\n  resume: offby accept {job['id']}")
     print()
     return 0
 
@@ -334,6 +359,8 @@ def cmd_lessons(args) -> int:
             line += f" → thinking multiplies output ≈{fmean(m['think_out']) / max(1, fmean(m['nothink_out'])):.1f}x"
         if m["think_out"] and not m["nothink_out"]:
             line += " → every call so far carried a reasoning trace; the model thinks by default unless told not to"
+        if mid.startswith("mock/"):
+            line += "   [mock upstream — constants, not measurements]"
         print(line)
     print("\n  BREACHES (latest per job)")
     any_breach = False
@@ -391,12 +418,21 @@ def cmd_serve(args) -> int:
 
 def cmd_mock(args) -> int:
     import uvicorn
-    from .mock import create_mock
-    app = create_mock(model=args.model, output_tokens=args.output_tokens, reasoning_share=args.reasoning_share,
-                      output_tokens_off=args.output_tokens_off, price=_parse_price(args.price) or (0.06, 0.24),
-                      latency_ms=args.latency_ms, seed=args.seed)
-    print(f"mock upstream on http://{args.host}:{args.port}/v1  model={args.model} "
-          f"output≈{args.output_tokens} (think-off≈{args.output_tokens_off}) reasoning_share={args.reasoning_share}", flush=True)
+    from .mock import PROFILES, create_mock
+    kw = dict(model=args.model, output_tokens=args.output_tokens, reasoning_share=args.reasoning_share,
+              output_tokens_off=args.output_tokens_off, price=_parse_price(args.price) or (0.06, 0.24),
+              latency_ms=args.latency_ms, tail_sigma_on=args.tail_on, tail_sigma_off=args.tail_off,
+              error_rate=args.error_rate, error_codes=tuple(int(c) for c in args.error_codes.split(",")),
+              ignore_include_usage=args.ignore_include_usage, reasoning_report=args.reasoning_report,
+              respond_model=args.respond_model, pricing=args.pricing, honor_max_tokens=not args.ignore_max_tokens,
+              seed=args.seed)
+    for k, v in PROFILES[args.profile].items():
+        kw[k] = v
+    app = create_mock(**kw)
+    print(f"mock upstream on http://{args.host}:{args.port}/v1  profile={args.profile} model={kw['model']} "
+          f"output≈{args.output_tokens}×lognormal(σ={kw['tail_sigma_on']}) think-off≈{args.output_tokens_off} "
+          f"latency≈{kw['latency_ms']:g}ms errors={kw['error_rate']:.0%} reasoning={kw['reasoning_report']} "
+          f"pricing={kw['pricing']}", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 
@@ -463,12 +499,22 @@ def main(argv: list[str] | None = None) -> int:
     m = sub.add_parser("mock", help="fake upstream that reproduces the think-on overrun")
     m.add_argument("--host", default="127.0.0.1")
     m.add_argument("--port", type=int, default=8499)
-    m.add_argument("--model", default="nvidia/nemotron-3-nano-30b-a3b")
-    m.add_argument("--output-tokens", type=int, default=2150)
-    m.add_argument("--output-tokens-off", type=int, default=290)
+    m.add_argument("--model", default="mock/nemotron-3-nano-30b-a3b", help="ids are prefixed mock/ so lessons never mistake them for measurements")
+    m.add_argument("--output-tokens", type=int, default=2150, help="median completion tokens with thinking on")
+    m.add_argument("--output-tokens-off", type=int, default=290, help="median with chat_template_kwargs.enable_thinking=false")
     m.add_argument("--reasoning-share", type=float, default=0.87)
     m.add_argument("--price", default="0.06,0.24")
-    m.add_argument("--latency-ms", type=float, default=0)
+    m.add_argument("--latency-ms", type=float, default=1000, help="per call, ±50%%; 0 for tests")
+    m.add_argument("--tail-on", type=float, default=0.8, help="lognormal σ of completion length with thinking on (0 = ±5%% jitter)")
+    m.add_argument("--tail-off", type=float, default=0.3, help="lognormal σ with thinking off")
+    m.add_argument("--error-rate", type=float, default=0.0)
+    m.add_argument("--error-codes", default="429,500")
+    m.add_argument("--ignore-include-usage", action="store_true", help="stream without a usage chunk (older vLLM / some gateways)")
+    m.add_argument("--reasoning-report", choices=["details", "reasoning-field", "think-tags", "hidden"], default="details")
+    m.add_argument("--respond-model", choices=["echo", "canonical", "base"], default="echo")
+    m.add_argument("--pricing", choices=["per-1m", "per-token-strings", "zero", "absent"], default="per-1m")
+    m.add_argument("--ignore-max-tokens", action="store_true")
+    m.add_argument("--profile", choices=["friendly", "hostile"], default="friendly", help="hostile = errors 10%%, reasoning in reasoning_content, canonical ids, per-token price strings")
     m.add_argument("--seed", type=int)
     m.set_defaults(fn=cmd_mock)
 

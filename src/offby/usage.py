@@ -1,8 +1,10 @@
 """Read the `usage` object off OpenAI-compatible responses (JSON or SSE).
 
-Rule: reasoning tokens are unknown until observed. If completion_tokens_details is
-absent we may ESTIMATE from reasoning_content / <think> text and flag it — never
-silently coerce null to 0.
+Rules: reasoning tokens are unknown until observed — if completion_tokens_details is
+absent we may ESTIMATE from reasoning_content / <think> text and flag it, never coerce
+null to 0. A streamed response that never carries a usage chunk is not silently
+dropped either: we estimate the completion from the streamed text and flag
+`estimated`, or report `None` so the proxy can count it as unmetered.
 """
 
 from __future__ import annotations
@@ -22,6 +24,9 @@ class Usage:
     reasoning_tokens: int | None = None
     reasoning_estimated: bool = False
     cached_tokens: int | None = None
+    finish_reason: str | None = None
+    estimated: bool = False  # no usage object: tokens estimated from content
+    error_status: int | None = None  # a top-level error arrived (mid-stream or in body)
 
 
 def _rough_tokens(text: str) -> int:
@@ -62,31 +67,49 @@ def estimate_reasoning(choices) -> int | None:
     return total if found else None
 
 
+def _error_status(body: dict) -> int | None:
+    err = body.get("error")
+    if not isinstance(err, dict):
+        return None
+    code = err.get("code") or err.get("status")
+    return code if isinstance(code, int) and 400 <= code < 600 else 500
+
+
 def from_response(body: dict) -> Usage | None:
     if not isinstance(body, dict):
         return None
     usage = body.get("usage")
+    choices = body.get("choices")
+    finish = None
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        finish = choices[0].get("finish_reason")
     if not isinstance(usage, dict):
-        return None
+        err = _error_status(body)
+        return Usage(body.get("model"), None, None, error_status=err) if err else None
     reasoning, estimated = _reasoning_from_details(usage), False
     if reasoning is None:
-        est = estimate_reasoning(body.get("choices"))
+        est = estimate_reasoning(choices)
         if est is not None:
             reasoning, estimated = est, True
+    # input_tokens/output_tokens: Responses-API and Anthropic-shaped usage objects
+    prompt = usage.get("prompt_tokens", usage.get("input_tokens"))
+    completion = usage.get("completion_tokens", usage.get("output_tokens"))
     return Usage(
         model=body.get("model"),
-        prompt_tokens=usage.get("prompt_tokens"),
-        completion_tokens=usage.get("completion_tokens"),
+        prompt_tokens=prompt,
+        completion_tokens=completion,
         reasoning_tokens=reasoning,
         reasoning_estimated=estimated,
         cached_tokens=_cached_from_details(usage),
+        finish_reason=finish,
     )
 
 
 def from_sse(text: str) -> Usage | None:
-    """Scan an SSE body for the chunk carrying `usage` (stream_options.include_usage)."""
-    model, usage_chunk = None, None
-    reasoning_chars = 0
+    """Scan an SSE body for the chunk carrying `usage` (stream_options.include_usage).
+    Without one, estimate completion tokens from the streamed text and flag `estimated`."""
+    model, usage_chunk, finish, error = None, None, None, None
+    content_chars = reasoning_chars = 0
     for line in text.splitlines():
         if not line.startswith("data:"):
             continue
@@ -97,17 +120,32 @@ def from_sse(text: str) -> Usage | None:
             obj = json.loads(data)
         except json.JSONDecodeError:
             continue
+        if not isinstance(obj, dict):
+            continue
         model = model or obj.get("model")
+        error = error or _error_status(obj)
         for ch in obj.get("choices") or []:
             delta = (ch or {}).get("delta") or {}
             rc = delta.get("reasoning_content") or delta.get("reasoning")
             if isinstance(rc, str):
                 reasoning_chars += len(rc)
+            c = delta.get("content")
+            if isinstance(c, str):
+                content_chars += len(c)
+            finish = (ch or {}).get("finish_reason") or finish
         if isinstance(obj.get("usage"), dict):
             usage_chunk = obj
-    if usage_chunk is None:
-        return None
-    u = from_response({"model": model, "usage": usage_chunk["usage"], "choices": []})
-    if u and u.reasoning_tokens is None and reasoning_chars:
-        u.reasoning_tokens, u.reasoning_estimated = max(1, reasoning_chars // 4), True
-    return u
+    if usage_chunk is not None:
+        u = from_response({"model": model, "usage": usage_chunk["usage"], "choices": []})
+        if u and u.reasoning_tokens is None and reasoning_chars:
+            u.reasoning_tokens, u.reasoning_estimated = max(1, reasoning_chars // 4), True
+        if u:
+            u.finish_reason, u.error_status = finish, error
+        return u
+    if error:
+        return Usage(model, None, None, error_status=error, finish_reason=finish)
+    if content_chars or reasoning_chars:
+        return Usage(model, None, max(1, (content_chars + reasoning_chars) // 4),
+                     reasoning_tokens=(max(1, reasoning_chars // 4) if reasoning_chars else None),
+                     reasoning_estimated=bool(reasoning_chars), finish_reason=finish, estimated=True)
+    return None

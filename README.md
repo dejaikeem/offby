@@ -58,7 +58,7 @@ flowchart LR
 
 1. **예보 → 다섯 항.** `호출수 · 입력 tok/콜 · 출력 tok/콜 · 단가 · 창`. 단가는 `GET /v1/models?verbose=true`에서 라이브로 읽고, 모르는 모델은 `UNPRICED`로 맨 위에 뜬다 — 절대 $0이 아니다.
 2. **잡을 Offby로.** `OPENAI_BASE_URL` 한 줄. 요청 본문은 손대지 않고 전달한다.
-3. **10콜부터 심판.** 응답마다 붙어오는 `usage`를 읽어 항마다 실측 평균 ÷ 예보를 계산한다. **전체 평균과 최근 5콜 평균이 둘 다** 임계(기본 2배)를 넘어야 이탈 — 긴 답 하나로는 잡이 죽지 않는다. 이탈하면 그 다음 요청부터 진짜 에러가 나간다:
+3. **유효 콜 10개부터 심판.** 응답마다 붙어오는 `usage`를 읽어 항마다 실측 ÷ 예보의 비율을 쌓는다. 판정창 전체 **또는** 최근 30콜의 평균 비율이 임계(기본 2배)를 **t > 2.5의 확신으로** 넘을 때만 이탈 — 실제 출력 길이는 꼬리가 긴데(p95가 중앙값의 3.6배), 긴 답 하나로는 잡이 죽지 않는다(시뮬레이션 0%). 에러 응답과 usage 없는 응답은 평균에 들어가지 않고 따로 센다. 이탈하면 그 다음 요청부터 진짜 에러가 나간다:
 
 ```http
 HTTP/1.1 402 Payment Required
@@ -66,13 +66,15 @@ X-Offby-Halt: output_tokens
 X-Offby-Diagnosis: http://localhost:8402/j/nightly-classify/diagnosis
 
 {"error":{"type":"offby_term_breach","term":"output_tokens","ratio":8.6,
- "message":"term output_tokens breached 8.6x (250→2150) — halted at 25/200000; projected $103.20 vs $16.80",
- "resume":"offby accept nightly-classify output_tokens=2200"}}
+ "message":"offby_term_breach: term output_tokens breached 8.6x (250→2150, t=4.1) — halted at 25/200,000 (judged at 10, 15 were in flight); projected $103.20 vs $16.80",
+ "resume":"offby accept nightly-classify output_tokens=2150","errors":{"429":2},"unmetered":0}}
 ```
 
 4. **진단은 이탈 때만.** `nemotron-3-super`가 증거 묶음(reasoning 토큰 비중, 재시도·429, 캐시 비중, 언급한 적 없는 모델)을 읽고 **원인 · 최상위 unknown · 수정안**을 돌려준다. 원인을 고쳐 재실행하거나(`offby accept <job>`), 새 숫자를 받아들인다(`offby accept <job> output_tokens=2200`).
 
 **hot path에 모델 호출은 0.** 모델은 잡당 두 번만 — 문장 파싱 한 번(문장을 썼을 때만), 이탈마다 진단 한 번.
+
+심판 규칙의 검증 수치(실제 출력 분포를 흉내 낸 lognormal 시뮬레이션, `judge.py` 직접 호출): 건강한 잡 오탐 **0%**(스파이크 2%까지), 예보를 평균으로 잡았을 때도 0%, 4,000토큰 답 하나가 n=10~30 어디에 와도 **0%**; 8배 폭주는 10콜, **1,000콜 건강 뒤 8배 급변은 11콜**(전체평균 규칙은 286콜), 2.5배는 24콜, 30%가 10배인 bimodal은 33콜, 1→3배 드리프트는 128콜에 잡힘.
 
 ## 용어 — job, call, run
 
@@ -92,6 +94,7 @@ X-Offby-Diagnosis: http://localhost:8402/j/nightly-classify/diagnosis
 | 티켓 5,000개를 같은 방식으로 처리하는 에이전트 플릿 | **맞음** | 반복 모양 |
 | ReAct류 에이전트 루프 1회 | 애매함 | 콜 수 불명, 컨텍스트가 매 턴 커져 `input_tokens`가 자연히 몇 배가 됨. `--baseline`으로 "급변"만 |
 | 사람이 보고 있는 인터랙티브 세션, 챗봇 서빙 트래픽 | **안 맞음** | 예보도 모양도 끝도 없다. 사람이 이미 루프 안에 있다. 이건 게이트웨이의 키별 예산 영역 |
+| `stream_options.include_usage`를 무시하는 업스트림 | **부분** | 스트림 텍스트로 토큰을 추정해(표시함) 판정하고, usage가 다섯 번 연속 없으면 `X-Offby-Halt: usage`로 멈춘다 — 조용히 통과시키지 않는다 |
 
 Offby는 **아무도 안 보고 있는 실행**을 위한 것이다. 사람이 보고 있는 실행에 끼우면 심판이 아니라 방해다.
 
@@ -118,14 +121,14 @@ $ offby forecast "오늘 밤 리뷰 20만 건을 nemotron-nano로 분류. 프롬
 
 **22:12** 환경변수 한 줄 붙여 실행. `OPENAI_BASE_URL=http://localhost:8402/j/j_7f3a/v1 python classify.py`
 
-**22:12:40** 열 콜이 쌓였다. 출력 평균 2,137 ÷ 예보 250 = **8.5배**, 최근 5콜 2,140 ÷ 250 = **8.6배** — 둘 다 임계 초과 → 이탈. 호출수·입력·단가는 계획대로. 깨진 항은 `output_tokens` 하나. 지금까지 $0.005, 이대로면 **$107.6**.
+**22:12:40** 유효 콜 열 개가 쌓였다. 출력 평균 2,137 ÷ 예보 250 = **8.5배**, 그것도 흔들림 없이(t = 4.1 > 2.5) → 이탈. 호출수·입력·단가는 계획대로. 깨진 항은 `output_tokens` 하나. 지금까지 $0.005, 이대로면 **$107.6**.
 
 **22:13** 다음 요청에 402. A의 터미널:
 
 ```
-openai.APIStatusError: 402 offby: term output_tokens breached 8.6x (250→2150)
-  — halted at 25/200000; projected $107.60 vs $16.80.
-  resume: offby accept j_7f3a output_tokens=2200   diagnosis: http://localhost:8402/j/j_7f3a
+openai.APIStatusError: 402 offby: offby_term_breach: term output_tokens breached 8.6x (250→2150, t=4.1)
+  — halted at 25/200,000 (judged at 10, 15 were in flight); projected $107.60 vs $16.80
+  resume: offby accept j_7f3a output_tokens=2150   diagnosis: http://localhost:8402/j/j_7f3a/diagnosis
 ```
 
 **22:13** 진단(`nemotron-3-super`):
@@ -142,7 +145,7 @@ openai.APIStatusError: 402 offby: term output_tokens breached 8.6x (250→2150)
 
 ## 지금 돌려보기 (PoC)
 
-키 없이, 돈 안 쓰고, 위 시나리오를 재현한다. 모의 업스트림이 Nemotron처럼 **think-on 기본**으로 답한다.
+키 없이, 돈 안 쓰고, 위 시나리오를 재현한다. 모의 업스트림이 Nemotron처럼 **think-on 기본**으로 답하고, 기본값부터 현실을 닮았다: 출력 길이는 lognormal(σ 0.8), 콜당 지연 1초±50%, `max_tokens`를 넘으면 잘라서 `finish_reason: length`. `--profile hostile`이면 429/500 10%, reasoning이 `reasoning_content`로, 모델 id는 canonical로, 가격은 토큰당 문자열로 온다. 모델 id는 `mock/`으로 시작해 `lessons`가 실측과 섞지 않는다. 빨리 보려면 `--latency-ms 0`.
 
 ```bash
 uv sync                                                              # Python 3.12, .venv
@@ -158,7 +161,8 @@ uv run offby job ensure classify-reviews --calls 120 --input 40 --output 250 \
 #   expected total $0.01 · base_url → http://localhost:8402/j/classify-reviews/v1
 
 OPENAI_BASE_URL=http://localhost:8402/j/classify-reviews/v1 uv run python examples/classify.py --data examples/reviews.jsonl
-#   10콜 뒤: 402 offby: term output_tokens breached 8.6x (250→2150) — halted at 12/120; projected $0.0620 vs $0.0075
+#   유효 10콜 뒤: 402 offby: offby_term_breach: term output_tokens breached 8.9x (250→2234, t=4.1)
+#              — halted at 10/120; projected $0.0646 vs $0.0075     (숫자는 매번 조금 다르다 — 꼬리가 긴 분포니까)
 
 uv run offby report classify-reviews       # 항별 표 · 증거(reasoning 87%) · 진단 · resume 명령
 uv run offby accept classify-reviews       # 원인을 고쳤다 → 다음 콜부터 다시 판정
@@ -169,10 +173,12 @@ uv run offby lessons                       # 이 모델은 thinking이 출력을
 uv run offby job ensure classify-reviews -y   # 내일: 같은 이름 = 새 run, 예보 유지
 ```
 
+문장 예보도 mock 상대로 돌아간다(mock이 파싱 프롬프트에 답한다): `uv run offby forecast "classify 120 reviews tonight on nemotron-nano, short prompts, paragraph answers, under $1" --budget 1 --upstream http://127.0.0.1:8499/v1 --api-key mock`. 적대적 조건은 `uv run offby mock --port 8499 --profile hostile`로 띄우고 같은 흐름을 다시 — `report`에 `failed calls: 4 (429)`, `reasoning share 87% (estimated)` 같은 줄이 붙는다.
+
 에이전트 스킬로 같은 흐름을 돌리려면 `skills/offby/SKILL.md`를 하네스의 스킬 폴더에 두면 된다(Claude Code: `.claude/skills/offby`). 실제 Token Factory로 가려면 `NEBIUS_API_KEY`를 두고 `--upstream`을 뺀다. 기록은 `~/.offby/offby.sqlite`(또는 `$OFFBY_DB`)에 usage만 남는다.
 
-**있는 것** — 프록시(비스트리밍·스트리밍) · usage 미터(SQLite) · 가격 오라클(`/v1/models?verbose=true`를 관용적으로 읽고 모르면 `UNPRICED`) · 이탈 엔진(10콜 · 2배 · 두 평균) · 402 본문/헤더 · 이름 붙은 잡과 run(`job ensure`) · `accept` / `report` / `lessons` / `jobs` · 베이스라인 모드 · nano 예보 파싱 · super 진단 · 모의 업스트림 · 에이전트 스킬 · 테스트 24개.
-**아직 없는 것** — Token Factory 실측(정본 모델 id, `reasoning_tokens`가 채워지는지, thinking을 끄는 플래그, verbose 가격 응답의 실제 모양) · 이력 기반 자동 예보 · `alert` 모드(402 없이 알림만) · 진단 스트리밍 · UI · LiteLLM 플러그인.
+**있는 것** — 프록시(비스트리밍·스트리밍, chat/completions·completions·embeddings·responses 계측) · usage 미터(SQLite, `finish_reason` 포함) · 가격 오라클(`/v1/models` 응답을 단위표로 읽고 `"0"`·부재·모호한 꼬리는 `UNPRICED`) · 이탈 엔진(유효 10콜 · 2배 · t>2.5, 판정창 전체 OR 최근 30콜) · 에러/usage 없음/추정 분리 집계 · usage 5연속 없음 → `X-Offby-Halt: usage` · 402 본문/헤더(`X-Should-Retry: false`) · 이름 붙은 잡과 run(`job ensure`) · `accept` / `report` / `lessons` / `jobs` · 베이스라인 모드(중앙값) · nano 예보 파싱 · super 진단(빈 응답은 `unavailable`) · 현실적 모의 업스트림(꼬리·지연·에러·reasoning 4형태·가격 4형태·`--profile hostile`) · 에이전트 스킬 · 테스트 43개.
+**아직 없는 것** — Token Factory 실측(정본 모델 id, `reasoning_tokens`가 채워지는지, thinking을 끄는 플래그, verbose 가격 응답의 실제 모양) · `alert` 모드(402 없이 웹훅/로그만) · 웹훅 · sticky halt와 예산 강제(`job ensure`로 halt를 우회할 수 있음) · O(1) 심판(지금은 콜마다 run 전체를 다시 계산) · 다중 프록시 안전 · HTTP 컨트롤 플레인 · 이력 기반 자동 예보 · 진단 스트리밍 · UI · LiteLLM 플러그인.
 
 ## 모델은 어디서 무게를 받나
 
@@ -203,9 +209,10 @@ uv run offby job ensure classify-reviews -y   # 내일: 같은 이름 = 새 run,
 - **usage만.** 미터는 토큰 수·모델 id·상태·지연·rate-limit 헤더를 저장한다. 프롬프트와 응답은 컬럼 자체가 없다.
 - **$0 금지.** 가격 없는 모델은 `UNPRICED`로 첫 줄에 뜬다. 조용히 0이 되지 않는다.
 - **가정은 보이게, 확인받고 집행.** 미기재 항마다 `ASSUMED`와 근거 문구가 붙는다.
-- **10콜 전엔 판정 없음, 두 평균이 일치해야 한다.** 이력이 쌓인 뒤라면 롱테일 출력 하나로는 정지하지 않는다. (경계 조건: 정확히 10콜째에 수십 배짜리 답 하나가 들어오면 둘 다 넘길 수 있다.)
+- **유효 콜 10개 전엔 판정 없음, 넘어도 확신이 있어야 한다.** 평균 비율이 임계를 넘는 것만으론 부족하고 t > 2.5(판정창 전체 또는 최근 30콜)여야 한다. 실제 출력은 꼬리가 길어서, 평균만 보던 규칙은 건강한 잡의 36~49%를 죽였다. 롱테일 답 하나로는 어느 시점에도 정지하지 않는다.
+- **에러와 usage 없음은 콜이 아니다.** 429/5xx는 평균에도 `calls` 항에도 들어가지 않고 `failed calls`로 따로 센다. 2xx인데 usage가 없으면 스트림 텍스트로 추정해 표시하고, 다섯 번 연속이면 `usage` 항으로 멈춘다 — 심판이 볼 수 없는 업스트림은 조용히 통과시키지 않는다.
 - **재개하면 판정 창을 리셋한다.** `accept` 뒤에는 그 이후 콜만 본다. 안 그러면 고친 뒤에도 오염된 평균 때문에 첫 콜에서 다시 멈춘다. 총액·투영은 run 전체로 센다.
-- **402는 이탈을 만든 콜의 *다음* 요청부터.** 이미 돈이 나간 응답은 그대로 돌려준다. 동시성이 8이면 "10콜 판정, 16콜 정지"가 나온다.
+- **402는 이탈을 만든 콜의 *다음* 요청부터.** 이미 돈이 나간 응답은 그대로 돌려준다. 동시성만큼 더 나가며, 402 메시지가 "judged at 10, 7 were in flight"로 그 차이를 말한다.
 - **Offby의 402는 업스트림의 402가 아니다.** Token Factory는 *네* 잔액이 소진되면 402를 낸다. Offby의 402는 `type: offby_term_breach`와 `X-Offby-Halt`를 달아 절대 섞이지 않는다.
 - **원하면 fail-open.** `--fail-open`이면 미터가 죽어도 트래픽을 통과시킨다. 심판이 건강한 잡을 죽이는 물건이어선 안 된다.
 - **reasoning 토큰은 관측 전엔 미지수.** `completion_tokens_details`가 null이면 `reasoning_content`나 `<think>` 태그로 추정하고 추정이라 표시한다.
@@ -214,7 +221,7 @@ uv run offby job ensure classify-reviews -y   # 내일: 같은 이름 = 새 run,
 
 ```bash
 offby serve    --upstream https://api.tokenfactory.nebius.com/v1 [--fail-open]   # 프록시
-offby mock     --port 8499                                                        # 가짜 업스트림 (PoC)
+offby mock     --port 8499 [--profile hostile] [--latency-ms 0] [--tail-on 0.8]    # 가짜 업스트림 (PoC)
 offby job ensure <name> --calls N --input I --output O --model <id> --budget B     # 이름 붙은 잡 · 다시 부르면 새 run
 offby job ensure <name> --baseline 10                                             # 예보 없이
 offby forecast "200k-row classification tonight on nemotron-nano, …" --budget 20  # 1회용 잡, 문장 파싱
@@ -230,7 +237,8 @@ offby jobs
 - [ ] **1주** — Token Factory day-1 측정(정본 모델 id, `reasoning_tokens` 채워지는지, 어떤 플래그가 thinking을 끄는지, nano에서 `json_schema`가 버티는지)
 - [x] **2주** — 이탈 엔진, 402 본문, `accept`, CLI, report
 - [x] **2주+** — 이름 붙은 잡과 run, `lessons`, 에이전트 스킬
-- [ ] **3주** — 이력 기반 자동 예보(같은 이름의 직전 정상 run이 예보), `alert` 모드, 예보 파서 폴백 실측, 진단 스트리밍
+- [x] **2주+ (9/9 감사 반영)** — 유효 콜만 판정 · t-검정 규칙 · usage 없음 이벤트 · 가격 정직화 · embeddings 계측 · 현실적 mock 기본값과 `hostile` 프로파일
+- [ ] **3주** — `alert` 모드 + 웹훅, sticky halt와 예산 항, O(1) 심판과 단일 writer 락, HTTP 컨트롤 플레인, 이력 기반 자동 예보, 예보 파서 폴백 실측, 진단 스트리밍
 - [ ] **4주** — 단일 페이지 UI: 예보 카드, 게이지, 터미널 로그, 진단 패널, run 드리프트
 - [ ] **5주** — 호스팅 데모: 서로 다른 항이 깨지는 서버측 잡 3종, IP당 쿼터, 일일 지출 상한, 리플레이 폴백
 - [ ] **6주** — LiteLLM 플러그인 모드, 클린 클론에서 README 검증, 3분 영상, 툴링 피드백

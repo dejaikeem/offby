@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   threshold REAL NOT NULL DEFAULT 2.0,
   judge_from INTEGER NOT NULL DEFAULT 0,
   run_from INTEGER NOT NULL DEFAULT 0,
+  halted_at INTEGER,
   evidence TEXT,
   diagnosis_status TEXT,
   diagnosis TEXT
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS calls (
   completion_tokens INTEGER,
   reasoning_tokens INTEGER,
   reasoning_estimated INTEGER NOT NULL DEFAULT 0,
+  usage_estimated INTEGER NOT NULL DEFAULT 0,
+  finish_reason TEXT,
   cached_tokens INTEGER,
   latency_ms REAL,
   in_per_m REAL,
@@ -63,10 +66,16 @@ class Store:
 
     def _migrate(self) -> None:
         """Add columns introduced after a DB was created. Cheap, idempotent."""
-        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
-        for col, ddl in (("judge_from", "INTEGER NOT NULL DEFAULT 0"), ("run_from", "INTEGER NOT NULL DEFAULT 0")):
-            if col not in have:
-                self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
+        wanted = {
+            "jobs": (("judge_from", "INTEGER NOT NULL DEFAULT 0"), ("run_from", "INTEGER NOT NULL DEFAULT 0"),
+                     ("halted_at", "INTEGER")),
+            "calls": (("usage_estimated", "INTEGER NOT NULL DEFAULT 0"), ("finish_reason", "TEXT")),
+        }
+        for table, cols in wanted.items():
+            have = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for col, ddl in cols:
+                if col not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
     # ---- jobs ----
     def create_job(
@@ -114,8 +123,8 @@ class Store:
             return self.create_job(job_id, terms or {}, sentence=sentence, budget_usd=budget_usd,
                                    baseline_n=baseline_n, min_calls=min_calls, threshold=threshold), True
         n = self.count_calls(job_id)
-        fields = dict(state="running", halted_term=None, diagnosis_status=None, diagnosis=None, evidence=None,
-                      judge_from=n, run_from=n, min_calls=min_calls, threshold=threshold)
+        fields = dict(state="running", halted_term=None, halted_at=None, diagnosis_status=None, diagnosis=None,
+                      evidence=None, judge_from=n, run_from=n, min_calls=min_calls, threshold=threshold)
         if terms:
             fields["terms"] = terms
         if sentence is not None:
@@ -131,7 +140,7 @@ class Store:
 
     def resume(self, job_id: str, terms: dict | None = None) -> dict:
         """Un-halt. Per-call judging restarts from the next call; totals keep counting."""
-        fields = dict(state="running", halted_term=None, diagnosis_status=None, judge_from=self.count_calls(job_id))
+        fields = dict(state="running", halted_term=None, halted_at=None, diagnosis_status=None, judge_from=self.count_calls(job_id))
         if terms is not None:
             fields["terms"] = terms
         self.update_job(job_id, **fields)

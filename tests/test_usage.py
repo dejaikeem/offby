@@ -36,5 +36,26 @@ def test_sse_usage_chunk():
     assert u.model == "m" and u.completion_tokens == 7 and u.reasoning_tokens == 3
 
 
-def test_sse_without_usage_is_none():
-    assert U.from_sse('data: {"model":"m","choices":[{"delta":{"content":"hi"}}]}\ndata: [DONE]') is None
+def test_sse_without_usage_is_estimated_from_text():
+    u = U.from_sse('data: {"model":"m","choices":[{"delta":{"content":"' + "x" * 400 + '"}}]}\ndata: [DONE]')
+    assert u.estimated and u.completion_tokens == 100 and u.prompt_tokens is None
+
+
+def test_sse_without_usage_or_text_is_none():
+    assert U.from_sse('data: {"model":"m","choices":[{"delta":{}}]}\ndata: [DONE]') is None
+
+
+def test_midstream_error_chunk_sets_error_status():
+    u = U.from_sse('data: {"model":"m","choices":[{"delta":{"content":"hi"}}]}\ndata: {"error":{"message":"boom","code":503}}')
+    assert u.error_status == 503
+
+
+def test_finish_reason_and_responses_api_keys():
+    u = U.from_response({"model": "m", "usage": {"input_tokens": 10, "output_tokens": 20},
+                         "choices": [{"message": {"content": "ok"}, "finish_reason": "length"}]})
+    assert u.prompt_tokens == 10 and u.completion_tokens == 20 and u.finish_reason == "length"
+
+
+def test_error_body_without_usage_is_error_status():
+    u = U.from_response({"error": {"message": "rate", "code": 429}})
+    assert u.error_status == 429 and u.completion_tokens is None

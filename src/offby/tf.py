@@ -39,12 +39,20 @@ def _extract_price(entry: dict) -> tuple[float, float] | None:
         return None
     pin = next((_num(pricing[k]) for k in _IN_KEYS if k in pricing), None)
     pout = next((_num(pricing[k]) for k in _OUT_KEYS if k in pricing), None)
-    if pin is None or pout is None:
-        return None
-    unit = str(pricing.get("unit", "")).lower()
-    if "token" in unit and "1m" not in unit and "million" not in unit or (pin < 0.001 and pout < 0.001):
-        pin, pout = pin * 1e6, pout * 1e6  # per-token quote → per-million
-    return pin, pout
+    if pin is None or pout is None or pin <= 0 or pout <= 0:
+        return None  # "0" / absent / negative is not a price — UNPRICED, never $0
+    unit = str(pricing.get("unit", "")).lower().replace(" ", "")
+    if "1m" in unit or "million" in unit or "per_m" in unit:
+        scale = 1.0
+    elif "1k" in unit or "thousand" in unit:
+        scale = 1e3
+    elif "token" in unit:
+        scale = 1e6  # per single token
+    elif pin < 0.001 and pout < 0.001:
+        scale = 1e6  # unlabeled but clearly per-token
+    else:
+        scale = 1.0
+    return pin * scale, pout * scale
 
 
 async def fetch_prices(client: httpx.AsyncClient, upstream: str, api_key: str | None = None) -> dict[str, tuple[float, float]]:
@@ -68,11 +76,12 @@ def price_for(prices: dict[str, tuple[float, float]], model: str | None) -> tupl
         return None
     if model in prices:
         return prices[model]
+    lower = {mid.lower(): p for mid, p in prices.items()}
+    if model.lower() in lower:
+        return lower[model.lower()]
     tail = model.split("/")[-1].lower()
-    for mid, p in prices.items():
-        if mid.split("/")[-1].lower() == tail:
-            return p
-    return None
+    hits = [p for mid, p in prices.items() if mid.split("/")[-1].lower() == tail]
+    return hits[0] if len(hits) == 1 else None  # ambiguous tail → UNPRICED rather than a guess
 
 
 # ---------------- forecast parsing ----------------
@@ -202,6 +211,8 @@ def build_evidence(job: dict, rows: list[dict], verdict) -> dict:
     for r in rows:
         statuses[str(r.get("status"))] = statuses.get(str(r.get("status")), 0) + 1
     models = sorted({r["model"] for r in rows if r.get("model")})
+    metered = [r for r in rows if (r.get("status") or 0) < 400 and r.get("completion_tokens") is not None]
+    truncated = sum(1 for r in metered if r.get("finish_reason") == "length")
     ev = {
         "job": job["id"],
         "sentence": job.get("sentence"),
@@ -215,6 +226,10 @@ def build_evidence(job: dict, rows: list[dict], verdict) -> dict:
         "reasoning_coverage": (len(reas) / len(comp)) if comp else None,
         "cached_input_share": (sum(a for a, _ in cached) / sum(b for _, b in cached)) if cached else None,
         "latency_ms_mean": (sum(lat) / len(lat)) if lat else None,
+        "truncated_share": (truncated / len(metered)) if metered else None,
+        "usage_estimated_calls": sum(1 for r in rows if r.get("usage_estimated")),
+        "errors": verdict.errors,
+        "unmetered": verdict.unmetered,
         "unpriced_calls": verdict.unpriced_calls,
         "spent_usd": verdict.spent_usd,
         "expected_usd": verdict.expected_usd,
