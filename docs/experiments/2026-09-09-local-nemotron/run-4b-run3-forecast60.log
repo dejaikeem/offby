@@ -1,0 +1,50 @@
+##### EXP2 — forecast a one-sentence verdict (output 60) but leave thinking on. 20:12:25
+  expected total   $0.00               budget $1 ✓                
+  job local-nano4b: new run started (240 calls in history, forecast updated)
+
+openai.APIStatusError: 402 offby: offby_term_breach: term output_tokens breached 4.7x (60→285, t=3.1) — halted at 42/120; projected $0.0085 vs $0.0020 (at the forecast price — upstream lists none)
+  resume:    offby accept local-nano4b output_tokens=300
+  diagnosis: http://localhost:8402/j/local-nano4b/diagnosis
+exit=0  20:16:21
+
+  local-nano4b  HALTED  halted on output_tokens
+
+  term           forecast  observed  last 5  ratio  t           
+  -------------  --------  --------  ------  -----  ----  ------
+  calls          120       43        43      0.36x        ok    
+  input_tokens   40        36        37      0.91x  <-99  ok    
+  output_tokens  60        281       207     4.68x  3.0   BREACH
+  price          1.0x      —         —       —      —     —     
+
+  calls this run 43, with usage 43  (283 in history)  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.0030  expected $0.00  projected $0.01  (priced at the forecast rate — upstream lists no price; 43 calls)
+  evidence: reasoning share of completion 88% (estimated); models nemotron-3-nano:4b; statuses {'200': 282}
+
+  diagnosis [unavailable]:
+    diagnosis failed: Client error '404 Not Found' for url 'http://127.0.0.1:11434/v1/chat/completions'
+    For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+
+  resume: offby accept local-nano4b output_tokens=300   (or fix the cause and: offby accept local-nano4b)
+
+##### raw 402 body
+{
+    "error": {
+        "type": "offby_term_breach",
+        "code": "offby_term_breach",
+        "term": "output_tokens",
+        "ratio": 4.68,
+        "message": "offby_term_breach: term output_tokens breached 4.7x (60\u2192281, t=3.0) \u2014 halted at 43/120 (judged at 42, 1 were in flight); projected $0.0084 vs $0.0020 (at the forecast price \u2014 upstream lists none)",
+        "resume": "offby accept local-nano4b output_tokens=300",
+        "diagnosis": "http://127.0.0.1:8402/j/local-nano4b/diagnosis",
+        "errors": {},
+        "unmetered": 0
+    }
+}
+##### diagnosis endpoint
+status: unavailable
+diagnosis: diagnosis failed: Client error '404 Not Found' for url 'http://127.0.0.1:11434/v1/chat/completions'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+--- events ---
+{"event": "halt", "job": "local-nano4b", "term": "output_tokens", "ratio": 4.746428571428571, "valid": 42, "spent_usd": 0.002962, "projected_usd": 0.008462914285714286}
+
+[exited with code 0]

@@ -1,0 +1,2 @@
+{"event": "halt", "job": "local-nano4b", "term": "output_tokens", "ratio": 4.746428571428571, "valid": 42, "spent_usd": 0.002962, "projected_usd": 0.008462914285714286}
+{"event": "halt", "job": "local-nano30b", "term": "output_tokens", "ratio": 3.0833333333333335, "valid": 11, "spent_usd": 0.000512, "projected_usd": 0.005590472727272727}

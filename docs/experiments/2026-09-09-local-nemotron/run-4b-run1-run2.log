@@ -1,0 +1,57 @@
+##### RUN 1 — thinking on (default). 19:59:03
+  90/120 classified
+  100/120 classified
+  110/120 classified
+  120/120 classified
+done: 120/120
+exit=0  20:07:38
+
+  local-nano4b  RUNNING
+
+  term           forecast  observed  last 5  ratio  t        
+  -------------  --------  --------  ------  -----  -----  --
+  calls          120       120       120     1.00x         ok
+  input_tokens   40        37        37      0.91x  <-99   ok
+  output_tokens  250       217       119     0.87x  -14.8  ok
+  price          1.0x      —         —       —      —      — 
+
+  calls this run 120, with usage 120  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.0000  expected $0.01  UNPRICED calls: 120
+
+[run1 think-on] calls=120 ok=120 errors=0
+  completion tokens: median=144 mean=217 p95=559 max=848 min=63
+  reasoning (est) tokens: median=98 mean=184 max=894  share=85%
+  finish_reason=length: 0/120   latency ms: median=6118 p95=19063
+  per-call completion: 171 268 164 639 111 145 127 449 133 164 814 523 105 437 157 102 472 165 163 171 114 107 170 109 516 92 144 124 386 109 130 64 135 114 105 424 95 134 186 94
+##### accept (cause fixed) + RUN 2 — reasoning_effort=none. 20:07:38
+  local-nano4b resumed (terms unchanged; judging restarts from the next call)
+  110/120 classified
+  120/120 classified
+done: 120/120
+exit=0  20:10:19
+  local-nano4b  RUNNING
+
+  term           forecast  observed  last 5  ratio  t       
+  -------------  --------  --------  ------  -----  ----  --
+  calls          120       240       240     2.00x        ok
+  input_tokens   40        37        37      0.91x  <-99  ok
+  output_tokens  250       67        67      0.27x  <-99  ok
+  price          1.0x      —         —       —      —     — 
+
+  calls this run 240, with usage 240, judging the last 120  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.0000  expected $0.01  UNPRICED calls: 240
+
+[run2 think-off] calls=240 ok=240 errors=0
+  completion tokens: median=95 mean=142 p95=495 max=848 min=24
+  reasoning (est) tokens: median=10 mean=92 max=894  share=65%
+  finish_reason=length: 0/240   latency ms: median=3697 p95=15215
+  per-call completion: 171 268 164 639 111 145 127 449 133 164 814 523 105 437 157 102 472 165 163 171 114 107 170 109 516 92 144 124 386 109 130 64 135 114 105 424 95 134 186 94
+##### lessons
+
+  MODELS (from usage objects; 'thinking' = reasoning_tokens > 0)
+  - nemotron-3-nano:4b: 240 calls, UNPRICED, input mean 37, output mean 217 with thinking (120 calls), 67 without (120 calls) → thinking multiplies output ≈3.2x
+
+  BREACHES (latest per job)
+--- halt events ---
+
+[exited with code 0]

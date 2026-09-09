@@ -1,0 +1,242 @@
+[
+ {
+  "id": "local-nano30b",
+  "created_at": 1788956099.3758888,
+  "sentence": null,
+  "budget_usd": 1.0,
+  "terms": {
+   "calls": {
+    "value": 120,
+    "source": "stated"
+   },
+   "input_tokens": {
+    "value": 40,
+    "source": "stated"
+   },
+   "output_tokens": {
+    "value": 60,
+    "source": "stated"
+   },
+   "model": {
+    "value": "nemotron-3-nano:30b",
+    "source": "stated"
+   },
+   "price": {
+    "in_per_m": 0.06,
+    "out_per_m": 0.24,
+    "source": "stated",
+    "model": "nemotron-3-nano:30b"
+   }
+  },
+  "state": "halted",
+  "halted_term": "output_tokens",
+  "baseline_n": null,
+  "min_calls": 10,
+  "threshold": 2.0,
+  "judge_from": 240,
+  "run_from": 240,
+  "halted_at": 11,
+  "evidence": {
+   "job": "local-nano30b",
+   "sentence": null,
+   "budget_usd": 1.0,
+   "forecast": {
+    "calls": {
+     "value": 120,
+     "source": "stated"
+    },
+    "input_tokens": {
+     "value": 40,
+     "source": "stated"
+    },
+    "output_tokens": {
+     "value": 60,
+     "source": "stated"
+    },
+    "model": {
+     "value": "nemotron-3-nano:30b",
+     "source": "stated"
+    },
+    "price": {
+     "in_per_m": 0.06,
+     "out_per_m": 0.24,
+     "source": "stated",
+     "model": "nemotron-3-nano:30b"
+    }
+   },
+   "n_calls": 11,
+   "models_seen": [
+    "nemotron-3-nano:30b"
+   ],
+   "status_counts": {
+    "200": 11
+   },
+   "reasoning_share": 0.9346437346437346,
+   "reasoning_estimated": true,
+   "reasoning_coverage": 1.0,
+   "cached_input_share": 0.49625935162094764,
+   "latency_ms_mean": 6478.745454545454,
+   "truncated_share": 0.0,
+   "usage_estimated_calls": 0,
+   "errors": {},
+   "unmetered": 0,
+   "unpriced_calls": 0,
+   "spent_usd": 0.00051246,
+   "expected_usd": 0.0020159999999999996,
+   "projected_usd": 0.005590472727272727,
+   "breached_term": "output_tokens",
+   "terms": {
+    "output_tokens": {
+     "forecast": 60,
+     "observed": 185.0,
+     "recent": 226.8,
+     "ratio": 3.0833333333333335,
+     "breached": true
+    },
+    "input_tokens": {
+     "forecast": 40,
+     "observed": 36.45454545454545,
+     "recent": 36.4,
+     "ratio": 0.9113636363636364,
+     "breached": false
+    },
+    "price": {
+     "forecast": 1.0,
+     "observed": null,
+     "recent": null,
+     "ratio": null,
+     "breached": false
+    },
+    "calls": {
+     "forecast": 120,
+     "observed": 11,
+     "recent": 11,
+     "ratio": 0.09166666666666666,
+     "breached": false
+    }
+   }
+  },
+  "diagnosis_status": "done",
+  "diagnosis": "MECHANISM: output_tokens forecast 60 observed 185 ratio 3.08 breached true  \nUNKNOWN: user never specified output token ceiling or token pricing tier  \nFIX: set output_tokens=60 request parameter projected_usd=0.002016"
+ },
+ {
+  "id": "local-nano4b",
+  "created_at": 1788937613.0025558,
+  "sentence": null,
+  "budget_usd": 1.0,
+  "terms": {
+   "calls": {
+    "value": 120,
+    "source": "stated"
+   },
+   "input_tokens": {
+    "value": 40,
+    "source": "stated"
+   },
+   "output_tokens": {
+    "value": 60,
+    "source": "stated"
+   },
+   "model": {
+    "value": "nemotron-3-nano:4b",
+    "source": "stated"
+   },
+   "price": {
+    "in_per_m": 0.06,
+    "out_per_m": 0.24,
+    "source": "stated",
+    "model": "nemotron-3-nano:4b"
+   }
+  },
+  "state": "halted",
+  "halted_term": "output_tokens",
+  "baseline_n": null,
+  "min_calls": 10,
+  "threshold": 2.0,
+  "judge_from": 240,
+  "run_from": 240,
+  "halted_at": 42,
+  "evidence": {
+   "job": "local-nano4b",
+   "sentence": null,
+   "budget_usd": 1.0,
+   "forecast": {
+    "calls": {
+     "value": 120,
+     "source": "stated"
+    },
+    "input_tokens": {
+     "value": 40,
+     "source": "stated"
+    },
+    "output_tokens": {
+     "value": 60,
+     "source": "stated"
+    },
+    "model": {
+     "value": "nemotron-3-nano:4b",
+     "source": "stated"
+    },
+    "price": {
+     "in_per_m": 0.06,
+     "out_per_m": 0.24,
+     "source": "stated",
+     "model": "nemotron-3-nano:4b"
+    }
+   },
+   "n_calls": 282,
+   "models_seen": [
+    "nemotron-3-nano:4b"
+   ],
+   "status_counts": {
+    "200": 282
+   },
+   "reasoning_share": 0.8779376119717568,
+   "reasoning_estimated": true,
+   "reasoning_coverage": 0.574468085106383,
+   "cached_input_share": 0.5499563064375182,
+   "latency_ms_mean": 6371.823404255319,
+   "truncated_share": 0.0,
+   "usage_estimated_calls": 0,
+   "errors": {},
+   "unmetered": 0,
+   "unpriced_calls": 0,
+   "spent_usd": 0.00296202,
+   "expected_usd": 0.0020159999999999996,
+   "projected_usd": 0.008462914285714286,
+   "breached_term": "output_tokens",
+   "terms": {
+    "output_tokens": {
+     "forecast": 60,
+     "observed": 284.7857142857143,
+     "recent": 212.8,
+     "ratio": 4.746428571428571,
+     "breached": true
+    },
+    "input_tokens": {
+     "forecast": 40,
+     "observed": 36.26190476190476,
+     "recent": 36.2,
+     "ratio": 0.9065476190476189,
+     "breached": false
+    },
+    "price": {
+     "forecast": 1.0,
+     "observed": null,
+     "recent": null,
+     "ratio": null,
+     "breached": false
+    },
+    "calls": {
+     "forecast": 120,
+     "observed": 42,
+     "recent": 42,
+     "ratio": 0.35,
+     "breached": false
+    }
+   }
+  },
+  "diagnosis_status": "unavailable",
+  "diagnosis": "diagnosis failed: Client error '404 Not Found' for url 'http://127.0.0.1:11434/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"
+ }
+]

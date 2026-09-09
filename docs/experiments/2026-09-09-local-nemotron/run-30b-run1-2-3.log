@@ -1,0 +1,89 @@
+##### RUN 1 — 30b thinking on. 21:14:59
+  job local-nano30b created
+  110/120 classified
+  120/120 classified
+done: 120/120
+exit=0  21:30:27
+  local-nano30b  RUNNING
+
+  term           forecast  observed  last 5  ratio  t       
+  -------------  --------  --------  ------  -----  ----  --
+  calls          120       120       120     1.00x        ok
+  input_tokens   40        37        37      0.91x  <-99  ok
+  output_tokens  250       404       190     1.62x  -0.4  ok
+  price          1.0x      —         —       —      —     — 
+
+  calls this run 120, with usage 120  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.0119  expected $0.0075  projected $0.0119  (priced at the forecast rate — upstream lists no price; 120 calls)
+
+[run1 think-on] n=120 completion: median=205 mean=404 p95=2092 max=4000 min=56 σ≈0.91 | reasoning(est) median=178 share=104% | length-cut 1 | latency median=9.6s p95=58.5s
+##### RUN 2 — accept + reasoning_effort=none. 21:30:27
+  local-nano30b resumed (terms unchanged; judging restarts from the next call)
+  120/120 classified
+done: 120/120
+exit=0  21:33:56
+  local-nano30b  RUNNING
+
+  term           forecast  observed  last 5  ratio  t        
+  -------------  --------  --------  ------  -----  -----  --
+  calls          120       120       120     1.00x         ok
+  input_tokens   40        37        37      0.91x  <-99   ok
+  output_tokens  250       89        46      0.36x  -38.0  ok
+  price          1.0x      —         —       —      —      — 
+
+  calls this run 240, with usage 240, judging the last 120  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.0147  expected $0.0075  projected $0.0147  (priced at the forecast rate — upstream lists no price; 240 calls)
+[run2 think-off] n=120 completion: median=66 mean=89 p95=326 max=695 min=2 σ≈1.35 | reasoning(est) median=0 share=0% | length-cut 0 | latency median=2.7s p95=8.4s
+##### RUN 3 — new run, forecast output 60, thinking on (expect a real 402 + 30b diagnosis). 21:33:56
+  job local-nano30b: new run started (240 calls in history, forecast updated)
+
+openai.APIStatusError: 402 offby: offby_term_breach: term output_tokens breached 3.1x (60→185, t=2.6) — halted at 11/120; projected $0.0056 vs $0.0020 (at the forecast price — upstream lists none)
+  resume:    offby accept local-nano30b output_tokens=190
+  diagnosis: http://localhost:8402/j/local-nano30b/diagnosis
+exit=0  21:34:42
+
+  local-nano30b  HALTED  halted on output_tokens
+
+  term           forecast  observed  last 5  ratio  t            
+  -------------  --------  --------  ------  -----  -----  ------
+  calls          120       12        12      0.10x         ok    
+  input_tokens   40        36        36      0.91x  -87.8  ok    
+  output_tokens  60        200       258     3.34x  2.9    BREACH
+  price          1.0x      —         —       —      —      —     
+
+  calls this run 12, with usage 12  (252 in history)  (verdict from 10 valid calls, threshold 2x, confidence t>2.5)
+  spent $0.0006  expected $0.0020  projected $0.0060  (priced at the forecast rate — upstream lists no price; 12 calls)
+  evidence: reasoning share of completion 93% (estimated); models nemotron-3-nano:30b; statuses {'200': 11}
+
+  diagnosis [done]:
+    MECHANISM: output_tokens forecast 60 observed 185 ratio 3.08 breached true  
+    UNKNOWN: user never specified output token ceiling or token pricing tier  
+    FIX: set output_tokens=60 request parameter projected_usd=0.002016
+
+  resume: offby accept local-nano30b output_tokens=250   (or fix the cause and: offby accept local-nano30b)
+
+[run3 think-on, forecast 60] n=12 completion: median=192 mean=200 p95=371 max=371 min=59 σ≈0.52 | reasoning(est) median=176 share=96% | length-cut 0 | latency median=7.4s p95=13.1s
+##### PARSE with 30b: sentence → 5 terms. 21:35:03
+  term             forecast       source                                                                    
+  ---------------  -------------  --------------------------------------------------------------------------
+  calls            120            stated ← The sentence explicitly states '120 reviews'                     
+  input tok/call   400            ASSUMED ← Cue 'short prompts' suggests ~400 input tokens per call         
+  output tok/call  250            ASSUMED ← Cue 'one-paragraph answers' suggests ~250 output tokens per call
+  price $/M        0.06 / 0.24    stated (nemotron-nano)                                                    
+  model            nemotron-nano  stated                                                                    
+  window           tonight        stated                                                                    
+  expected total   $0.0101        budget $1 ✓                                                               
+
+  job j_96e0 created. base_url → http://localhost:8402/j/j_96e0/v1
+##### LESSONS
+
+  MODELS (from usage objects; 'thinking' = reasoning_tokens > 0)
+  - nemotron-3-nano:4b: 283 calls, $0.06/0.24 per M (forecast price), input mean 37, output mean 234 with thinking (163 calls), 67 without (120 calls) → thinking multiplies output ≈3.5x
+  - nemotron-3-nano:30b: 252 calls, $0.06/0.24 per M (forecast price), input mean 37, output mean 385 with thinking (132 calls), 89 without (120 calls) → thinking multiplies output ≈4.3x
+
+  BREACHES (latest per job)
+--- events ---
+{"event": "halt", "job": "local-nano30b", "term": "output_tokens", "ratio": 3.0833333333333335, "valid": 11, "spent_usd": 0.000512, "projected_usd": 0.005590472727272727}
+done 21:35:08
+
+[exited with code 0]
