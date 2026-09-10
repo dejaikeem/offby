@@ -13,6 +13,7 @@ Offby는 **LLM을 수천 번 부르는 배치 작업 옆에 서 있는 미터기
 ```
 README.md, docs/README.en.md   설계와 사용법 (한/영). "계약서" 역할 — 코드는 이 문서를 따라간다
 docs/STATUS.md                 이 문서
+docs/USE-CASES.md              누구에게 무슨 쓸모인지 — 개인 · 에이전트 · 게이트웨이 팀 · Nebius · API SaaS
 src/offby/
   proxy.py     프록시 본체. 요청을 그대로 전달하고, 응답의 usage를 읽고, 심판을 부르고, 402를 낸다
   judge.py     심판. 순수 산술(모델 호출 없음). "예보 대비 몇 배인가"를 확신 있게 판단

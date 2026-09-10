@@ -9,7 +9,7 @@
 > **상태: PoC 동작 (모의 업스트림 기준).** Token Factory 실측 전. [Nebius × NVIDIA Global AI Hackathon](https://nebiusglobalaihackathon.devpost.com/) 출품, 제출 마감 2026-10-30. 로드맵 체크박스가 켜지기 전엔 아무것도 배송된 게 아니다.
 
 > *English readers: use the button above or open [docs/README.en.md](docs/README.en.md).*
-> 지금 실제로 뭐가 있고 뭐가 검증됐는지는 [docs/STATUS.md](docs/STATUS.md).
+> 지금 실제로 뭐가 있고 뭐가 검증됐는지는 [docs/STATUS.md](docs/STATUS.md). 누구에게 무슨 쓸모인지(개인·에이전트·게이트웨이 팀·Nebius·API SaaS)는 [docs/USE-CASES.md](docs/USE-CASES.md).
 
 ---
 
