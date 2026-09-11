@@ -266,4 +266,4 @@ The story is not "we cut your bill". It is: **the layer Token Factory does not h
 
 ## License
 
-Apache-2.0. See [LICENSE](../LICENSE).
+Apache-2.0. See [LICENSE](../LICENSE). Copyright 2026 DJ Kim (dejaikeem).

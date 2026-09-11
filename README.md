@@ -269,4 +269,4 @@ offby jobs
 
 ## 라이선스
 
-Apache-2.0. [LICENSE](LICENSE) 참조.
+Apache-2.0. [LICENSE](LICENSE) 참조. Copyright 2026 DJ Kim (dejaikeem).

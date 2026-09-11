@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Overnight scale run — 30b, three phases, hard wall-clock cap. Writes everything under $OUT.
 set -u
-cd /Users/dejay/Desktop/personal/offby
+cd "$(dirname "$0")/../../.."   # repo root
 OUT=/private/tmp/claude-501/-Users-dejay-Desktop-personal/49f023e1-7ed0-4bc5-8ae6-7ca454585ba2/scratchpad/overnight
 DATA=$OUT/reviews-6k.jsonl
 UP=http://127.0.0.1:11434/v1
